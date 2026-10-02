@@ -1069,10 +1069,13 @@ function obb(P) {     // oriented box from PCA of polygon vertices
 }
 const LANDMARK_INFO = [];   // {name, x, z, note}
 function buildLandmarks() {
+  // kinds modelled in detail by 15_landmarks.js are skipped here
+  const SKIP = typeof DETAILED_LANDMARKS !== 'undefined' ? DETAILED_LANDMARKS : new Set();
+  const lmk = k => SKIP.has(k) ? [] : (W.landmarks[k] || []);
   const gb = new GB(), gbF = new GB();
   const park = (W.landmarks.park || [])[0];
   // Catedral de Nuestra Señora del Rosario del Palmar: Latin cross, two front towers, dome on drum (proportions estimated)
-  for (const L of (W.landmarks.cathedral || [])) {
+  for (const L of lmk('cathedral')) {
     const o = obb(L.P);
     // front = end nearer Parque Bolívar (it faces the park across Calle 30)
     let fx = o.ux, fz = o.uz;
@@ -1110,8 +1113,8 @@ function buildLandmarks() {
     LANDMARK_INFO.push({ n: 'Catedral de Nuestra Señora del Rosario del Palmar', x: o.cx, z: o.cz, front: at(Lh + 6, 0), note: 'Huella OSM; volumen y torres aproximados' });
   }
   // CAMP — Centro Administrativo Municipal: podium + tower (≥ 9 storeys per Alcaldía; exact form pending)
-  if (CAMP_HAS_CADASTRE) for (const L of (W.landmarks.camp || [])) LANDMARK_INFO.push({ n: 'CAMP · Centro Administrativo Municipal', x: L.c.x, z: L.c.z, note: 'Pisos reales del catastro' });
-  for (const L of (CAMP_HAS_CADASTRE ? [] : (W.landmarks.camp || []))) {
+  if (CAMP_HAS_CADASTRE && !SKIP.has('camp')) for (const L of (W.landmarks.camp || [])) LANDMARK_INFO.push({ n: 'CAMP · Centro Administrativo Municipal', x: L.c.x, z: L.c.z, note: 'Pisos reales del catastro' });
+  for (const L of (CAMP_HAS_CADASTRE ? [] : lmk('camp'))) {
     const P = L.P, c = L.c, glass = col('#9fb4bf'), conc = col('#d2cfc6');
     gbF.walls(P, KERB, KERB + 7, conc, true); gbF.cap(P, null, KERB + 7, ROOF_FLAT);
     const T = P.map(p => ({ x: lerp(c.x, p.x, 0.62), z: lerp(c.z, p.z, 0.62) }));
@@ -1119,7 +1122,7 @@ function buildLandmarks() {
     LANDMARK_INFO.push({ n: 'CAMP · Centro Administrativo Municipal', x: c.x, z: c.z, note: 'Altura estimada (≥ 9 pisos)' });
   }
   // churches: add a bell tower at the end nearest a street (nave uses the footprint buildings already present)
-  for (const L of (W.landmarks.church || [])) {
+  for (const L of lmk('church')) {
     const o = obb(L.P); let best = null;
     for (const s of [-1, 1]) { const x = o.cx + o.ux * s * o.L / 2, z = o.cz + o.uz * s * o.L / 2; const ne = nearestEdge(x, z, 60); const d = ne ? ne.d : 99; if (!best || d < best.d) best = { x, z, s, d }; }
     const tw = Math.min(6, o.Wd * 0.35), x = best.x - o.ux * best.s * tw * 0.7, z = best.z - o.uz * best.s * tw * 0.7;
@@ -1130,12 +1133,12 @@ function buildLandmarks() {
     LANDMARK_INFO.push({ n: L.n, x: o.cx, z: o.cz, note: 'Torre aproximada' });
   }
   // Galería Central de Palmira: market hall (1953 building; volume approximate)
-  for (const L of (W.landmarks.market || [])) {
+  for (const L of lmk('market')) {
     gb.walls(L.P, KERB, KERB + 7.5, col('#e3d8bf'), true); gb.cap(L.P, null, KERB + 7.5, col('#8e8a80'));
     LANDMARK_INFO.push({ n: 'Galería Central de Palmira', x: L.c.x, z: L.c.z, note: 'Volumen aproximado (edificio de 1953)' });
   }
   // Estadio Francisco Rivera Escobar: stands as a ring (approximate)
-  for (const L of (W.landmarks.stadium || [])) {
+  for (const L of lmk('stadium')) {
     const c = L.c, inner = L.P.map(p => ({ x: lerp(c.x, p.x, 0.78), z: lerp(c.z, p.z, 0.78) }));
     gb.walls(L.P, KERB, KERB + 11, col('#cfcbc0'), false);
     gb.walls(inner, KERB, KERB + 4, col('#b7b2a6'), false, true);
@@ -2347,7 +2350,7 @@ function buildWorld() {
 //     (Q42838384 Antiguo Edificio de la Alcaldía, Q42838408 Catedral, Q42838437 Estación), es.wikipedia
 //     "Palmira (Colombia)" (dates, architects). Dimensions not given by footprints are ESTIMATED from photo
 //     proportions; every model says what is approximate.
-// Draw calls: one merged mesh per landmark (10 meshes). Triangle count is logged at boot.
+// Draw calls: one merged mesh per landmark (11 meshes, ~35k triangles). Stats are logged at boot (HOOKS.landmarkStats).
 
 const DETAILED_LANDMARKS = new Set(['cathedral', 'camp', 'church', 'market', 'stadium']);
 const LM_SELF_APPLY = true;
@@ -2510,7 +2513,7 @@ const LM_SELF_APPLY = true;
   function solid(P, h, id) { const b = { P, h, st: Math.max(1, Math.round(h / 3.3)), s: 'lm', hs: 'est', k: 'landmark', id, bb: bboxOf(P), c: centroid(P) }; bGrid.insertBox(b, ...b.bb); return b; }
   function heritage(P, n, id) { (W.landmarks.heritage = W.landmarks.heritage || []).push({ P, n, id, c: centroid(P), bb: bboxOf(P) }); }
   function circleP(x, z, r, n) { const P = []; for (let i = 0; i < n; i++) { const a = i / n * TAU; P.push({ x: x + Math.sin(a) * r, z: z + Math.cos(a) * r }); } return P; }
-  function rawBuilding(id) { const b = D.buildings.find(q => q.id === id); return b ? ptsOf(b.p) : null; }
+  function rawBuilding(id) { for (const b of D.buildings) { const bid = Array.isArray(b) ? b[5] : b.id; if (bid === id) return ptsOf(Array.isArray(b) ? b[0] : b.p); } return null; }
   function insetConvex(P, d) {
     const S = signedArea(P), n = P.length, L = [];
     for (let i = 0; i < n; i++) { const p = P[i], q = P[(i + 1) % n], dx = q.x - p.x, dz = q.z - p.z, l = Math.hypot(dx, dz) || 1, nx = S > 0 ? -dz / l : dz / l, nz = S > 0 ? dx / l : -dx / l; L.push({ x: p.x + nx * d, z: p.z + nz * d, dx: dx / l, dz: dz / l }); }
@@ -2528,16 +2531,15 @@ const LM_SELF_APPLY = true;
 
   // ------------------------------------------------------------ fixed anchors (derived from game data; see notes)
   // Antigua Alcaldía (Palacio de Gobierno): Wikidata Q42838384 gives "Plaza de Bolívar. Esquina sur occidental.
-  // Carrera 30, Calle 30". The SW corner of the plaza is the Carrera 30 / Calle 30 junction (the cathedral takes the
-  // SE quadrant), so the building is placed on the NE corner of the block west of Carrera 30 / south of Calle 30
-  // (block corner E -9.9 N -18.2 in D.blocks; that block is empty in the game data, Microsoft only has a large
-  // dropped courtyard footprint there). Setbacks 3-4 m from the kerb (wide paving in the photos). [APPROX]
+  // Carrera 30, Calle 30", i.e. the Carrera 30 / Calle 30 junction at the SW corner of Parque Bolívar. The Alcaldía's
+  // Base Catastral 2024 (game/palmira.json) has a 3-floor building of use "public" exactly on the NW corner of that
+  // junction (lot corner E -10.2 N -5.2; ~36 m on Calle 30 x ~31 m on Carrera 30), which matches the photos
+  // (13 + 11 bays, about 34 m long). That lot is used as the plan; the courtyard depth is ESTIMATED.
   function alcaldiaFrame() {
-    const c0 = EN(-9.9, -18.2), w = EN(-82.4, -9.5), s = EN(-17.9, -74.8);
-    const U = unit(w.x - c0.x, w.z - c0.z), V0 = unit(s.x - c0.x, s.z - c0.z);
+    const c0 = EN(-10.2, -5.2), w = EN(-46.3, -0.6), n = EN(-5.4, 25.3);
+    const U = unit(w.x - c0.x, w.z - c0.z), V0 = unit(n.x - c0.x, n.z - c0.z);
     let V = { x: -U.z, z: U.x }; if (V.x * V0.x + V.z * V0.z < 0) V = { x: -V.x, z: -V.z };
-    const O = { x: c0.x + U.x * 3.0 + V.x * 4.0, z: c0.z + U.z * 3.0 + V.z * 4.0 };
-    return { O, U, V, Lu: 47, Lv: 40, R: 2.6, D: 11 };
+    return { O: c0, U, V, Lu: Math.hypot(w.x - c0.x, w.z - c0.z), Lv: Math.hypot(n.x - c0.x, n.z - c0.z), R: 2.4, D: 9.5 };
   }
   function alcaldiaOutline(A) {
     const L = [[A.R, 0], [A.Lu, 0], [A.Lu, A.Lv], [0, A.Lv], [0, A.R]];
@@ -2550,6 +2552,17 @@ const LM_SELF_APPLY = true;
   // Bosque Municipal: entrance pavilion on the east side of Carrera 16, where the park's internal service road starts
   // (OSM service way at E 1370 N 26). The OSM "Bosque Municipal" node itself (E 1518) lies just outside the play area.
   const BOSQUE = { o: EN(1364.4, 8.0), north: unit(0.141, 0.990) };
+  // OSM footprints used when the loaded data has no such building (the city data uses cadastre parts instead):
+  // station way 421415401 and the four stadium grandstands (decimetres E/N, from game/palmira_centro.json).
+  const FALLBACK = {
+    'osm:way/421415401': [168, [-4569, -2, -4395, -27, -4464, -512, -4638, -487]],
+    'osm:way/1084076911': [72, [-6753, -31, -6639, 34, -6486, 70, -6332, 61, -6166, 9, -6061, -70, -5952, -201, -5903, -321, -6023, -369, -6072, -261, -6142, -183, -6217, -127, -6315, -81, -6304, -28, -6350, -18, -6362, -70, -6478, -67, -6590, -88, -6671, -125]],
+    'osm:way/1084076912': [105, [-5885, -493, -5990, -469, -6272, -1657, -6167, -1682]],
+    'osm:way/1084076913': [104, [-6846, -307, -7097, -1331, -7225, -1300, -6967, -277]],
+    'osm:way/1084076914': [106, [-7009, -1579, -6937, -1652, -6840, -1718, -6723, -1758, -6616, -1767, -6509, -1749, -6417, -1710, -6316, -1639, -6232, -1736, -6340, -1834, -6466, -1898, -6577, -1919, -6764, -1885, -7048, -1777, -7139, -1665]],
+  };
+  const footprint = id => rawBuilding(id) || (FALLBACK[id] ? ptsOf(FALLBACK[id][1]) : null);
+  const fpHeight = id => { for (const b of D.buildings) { const bid = Array.isArray(b) ? b[5] : b.id; if (bid === id) return (Array.isArray(b) ? b[1] : b.hgt) / 10; } return FALLBACK[id] ? FALLBACK[id][0] / 10 : 8; };
 
   // ------------------------------------------------------------ which generic footprints are replaced
   const REPL_IDS = new Set(['osm:way/421415401', 'osm:way/1084076911', 'osm:way/1084076912', 'osm:way/1084076913', 'osm:way/1084076914', 'osm:way/421415404', 'osm:way/553396337', 'osm:way/552002312']);
@@ -2557,10 +2570,11 @@ const LM_SELF_APPLY = true;
   for (const k of ['church', 'market', 'stadium', 'cathedral', 'camp']) for (const L of (W.landmarks[k] || [])) ZONES.push({ P: L.P });
   ZONES.push({ P: alcaldiaOutline(alcaldiaFrame()) });
   ZONES.push({ x: BULL.c.x, z: BULL.c.z, r: BULL.R + 1 });
+  { const sp = footprint('osm:way/421415401'); if (sp) { const q = sp.slice(); if (signedArea(q) < 0) q.reverse(); ZONES.push({ P: insetConvex(q, -6) }); } }
   const replacesBuilding = b => REPL_IDS.has(b.id) || ZONES.some(z => z.P ? pointInPoly(b.c.x, b.c.z, z.P) : Math.hypot(b.c.x - z.x, b.c.z - z.z) < z.r);
   const removed = W.buildings.filter(replacesBuilding);
   HOOKS.replacesBuilding = replacesBuilding;
-  HOOKS.removeBuildingIds = removed.map(b => b.id);
+  HOOKS.removeBuildingIds = removed.map(b => b.id || `${b.s}@${b.c.x.toFixed(1)},${b.c.z.toFixed(1)}`);
   HOOKS.detailedLandmarks = DETAILED_LANDMARKS;
   if (LM_SELF_APPLY && removed.length) {
     const set = new Set(removed);
@@ -2746,17 +2760,18 @@ const LM_SELF_APPLY = true;
       for (let i = 0; i <= nb; i++) { const s = s0 + i * bw; F.box(s, 0.9, 0.07, 0.5, 12.3, 0.16, WH); F.box(s, 13.75, 0.08, 0.5, 1.3, 0.5, WH); }
       for (let i = 0; i < nb; i++) {
         const sc = s0 + (i + 0.5) * bw, door = i % 4 === 2;
-        F.archRing(sc, 1.6, door ? 0 : 1.0, 4.1, 0.22, 0.05, WH, 6); F.arch(sc, 1.6, door ? 0 : 1.0, 4.1, 0.04, SH, 6); F.box(sc, 3.9, 0.08, 0.34, 0.5, 0.12, WH);
-        F.archRing(sc, 1.35, 5.85, 8.7, 0.2, 0.05, WH, 6); F.arch(sc, 1.35, 5.85, 8.7, 0.04, SH, 6); F.box(sc, 8.5, 0.08, 0.3, 0.45, 0.12, WH);
-        F.rect(sc - 0.6, sc + 0.6, 10.15, 12.5, 0.04, SH);
-        F.rect(sc - 0.78, sc - 0.6, 10.0, 12.6, 0.05, WH); F.rect(sc + 0.6, sc + 0.78, 10.0, 12.6, 0.05, WH); F.box(sc, 12.6, 0.12, 1.75, 0.2, 0.26, WH); F.box(sc, 9.95, 0.1, 1.5, 0.12, 0.2, WH);
-        if (balc.includes(i)) { F.box(sc, 5.2, 0.45, 2.7, 0.2, 0.9, WH); F.balustrade(sc - 1.3, sc + 1.3, 5.4, 0.95, 0.82, WH, 0.4); }
-        else F.box(sc, 5.6, 0.1, 1.6, 0.14, 0.22, WH);
-        if (balc2.includes(i)) { F.box(sc, 9.75, 0.35, 2.2, 0.15, 0.7, WH); F.box(sc, 10.75, 0.68, 2.25, 0.06, 0.08, IR); F.box(sc, 10.0, 0.68, 2.2, 0.05, 0.05, IR); for (let k = -5; k <= 5; k++) F.box(sc + k * 0.2, 9.9, 0.68, 0.035, 0.88, 0.035, IR); }
+        const wg = Math.min(1.5, bw * 0.56), w1 = Math.min(1.3, bw * 0.5), w2 = Math.min(1.2, bw * 0.46), hb = Math.min(1.3, bw * 0.5);
+        F.archRing(sc, wg, door ? 0 : 1.0, 4.1, 0.2, 0.05, WH, 6); F.arch(sc, wg, door ? 0 : 1.0, 4.1, 0.04, SH, 6); F.box(sc, 3.9, 0.08, 0.32, 0.5, 0.12, WH);
+        F.archRing(sc, w1, 5.85, 8.7, 0.18, 0.05, WH, 6); F.arch(sc, w1, 5.85, 8.7, 0.04, SH, 6); F.box(sc, 8.5, 0.08, 0.28, 0.45, 0.12, WH);
+        F.rect(sc - w2 / 2, sc + w2 / 2, 10.15, 12.5, 0.04, SH);
+        F.rect(sc - w2 / 2 - 0.16, sc - w2 / 2, 10.0, 12.6, 0.05, WH); F.rect(sc + w2 / 2, sc + w2 / 2 + 0.16, 10.0, 12.6, 0.05, WH); F.box(sc, 12.6, 0.12, w2 + 0.5, 0.2, 0.26, WH); F.box(sc, 9.95, 0.1, w2 + 0.3, 0.12, 0.2, WH);
+        if (balc.includes(i)) { F.box(sc, 5.2, 0.45, 2 * hb + 0.1, 0.2, 0.9, WH); F.balustrade(sc - hb, sc + hb, 5.4, 0.95, 0.82, WH, 0.4); }
+        else F.box(sc, 5.6, 0.1, w1 + 0.3, 0.14, 0.22, WH);
+        if (balc2.includes(i)) { F.box(sc, 9.75, 0.35, 2 * hb - 0.4, 0.15, 0.7, WH); F.box(sc, 10.75, 0.68, 2 * hb - 0.35, 0.06, 0.08, IR); F.box(sc, 10.0, 0.68, 2 * hb - 0.4, 0.05, 0.05, IR); for (let k = -4; k <= 4; k++) F.box(sc + k * (hb - 0.25) / 4, 9.9, 0.68, 0.035, 0.88, 0.035, IR); }
       }
     };
-    facade(fr.face('v', 0, -1), R + 0.4, Lu - 0.3, 13, [0, 6, 12], [3, 6, 9]);   // Calle 30
-    facade(fr.face('u', 0, -1), R + 0.4, Lv - 0.3, 11, [0, 5, 10], [5]);         // Carrera 30
+    facade(fr.face('v', 0, -1), R + 0.3, Lu - 0.3, 13, [0, 6, 12], [3, 9]);   // Calle 30 (south)
+    facade(fr.face('u', 0, -1), R + 0.3, Lv - 0.3, 11, [0, 5, 10], [3, 7]);   // Carrera 30 (east, faces the park)
     // rounded corner: belts / cornice as cylinders around the corner centre, one window per floor on the diagonal
     const cc = fr.P(R, R);
     cyl(gb, cc.x, 0, cc.z, 0.9, R + 0.03, R + 0.03, 12, ZOC); cyl(gb, cc.x, 4.75, cc.z, 0.42, R + 0.17, R + 0.17, 12, WH); cyl(gb, cc.x, 9.3, cc.z, 0.4, R + 0.17, R + 0.17, 12, WH);
@@ -2766,14 +2781,14 @@ const LM_SELF_APPLY = true;
       Fd.box(0, 5.2, 0.45, 2.6, 0.2, 0.9, WH); Fd.balustrade(-1.25, 1.25, 5.4, 0.95, 0.82, WH, 0.4);
       Fd.arch(0, 1.2, 5.85, 8.7, 0.03, SH, 6); Fd.rect(-0.55, 0.55, 10.15, 12.5, 0.03, SH); }
     // plain rear elevations (parking side): simple openings
-    for (const [F, L] of [[fr.face('v', Lv, 1), Lu], [fr.face('u', Lu, 1), Lv]]) for (let s = 2.5; s < L - 1.5; s += 4.2) { F.rect(s - 0.6, s + 0.6, 1.2, 3.6, 0.03, SH); F.rect(s - 0.55, s + 0.55, 6.0, 8.4, 0.03, SH); F.rect(s - 0.5, s + 0.5, 10.3, 12.4, 0.03, SH); }
+    for (const [F, L] of [[fr.face('v', Lv, 1), Lu], [fr.face('u', Lu, 1), Lv]]) for (let s = 2.5; s < L - 1.5; s += 3.6) { F.rect(s - 0.6, s + 0.6, 1.2, 3.6, 0.03, SH); F.rect(s - 0.55, s + 0.55, 6.0, 8.4, 0.03, SH); F.rect(s - 0.5, s + 0.5, 10.3, 12.4, 0.03, SH); }
     // courtyard: arcade on the ground floor (dark arches) under a white cornice
     for (const [F, a, b] of [[new Face(gb, inner[0], unit(inner[1].x - inner[0].x, inner[1].z - inner[0].z), { x: A.V.x, z: A.V.z }), 0, Lu - 2 * dd], [new Face(gb, inner[3], unit(inner[2].x - inner[3].x, inner[2].z - inner[3].z), { x: -A.V.x, z: -A.V.z }), 0, Lu - 2 * dd]])
-      for (let s = a + 1.8; s < b - 1; s += 3.3) F.arch(s, 2.2, 0, 3.8, 0.03, col('#7b7461'), 6);
+      for (let s = a + 1.6; s < b - 1; s += 2.9) F.arch(s, 1.9, 0, 3.8, 0.03, col('#7b7461'), 6);
     add(gb, 'alcaldia');
     solid(outer, 14, 'lm:alcaldia'); heritage(outer, 'Antigua Alcaldía', 'lm:alcaldia');
-    const c = centroid(outer);
-    info('Antigua Alcaldía · Palacio de Gobierno', c.x, c.z, 'Republicano, 1924-28 (BIC nacional). Ubicación según Wikidata Q42838384: esquina Cra 30 / Cl 30; planta estimada');
+    const c = fr.P(Lu / 2, Lv / 2);
+    info('Antigua Alcaldía · Palacio de Gobierno', c.x, c.z, 'Republicano, 1924-28 (BIC nacional). Esquina Cra 30 / Cl 30 (Wikidata Q42838384), lote catastral de 3 pisos; patio estimado');
   }
 
   // ============================================================ 3. CAMP — Centro Administrativo Municipal (Calle 30 # 29-39)
@@ -2834,7 +2849,7 @@ const LM_SELF_APPLY = true;
   // wings with arched doors and pilaster pairs; platform canopy and platform on the track (west) side; white urns in
   // the forecourt. Footprint OSM way 421415401 (17.5 x 49 m); heights ESTIMATED.
   function buildStation(add) {
-    const P = rawBuilding('osm:way/421415401'); if (!P) return;
+    const P = footprint('osm:way/421415401'); if (!P) return;
     const gb = new GB(), o = obb(P);
     let nF = { x: -o.uz, z: o.ux }; if (nF.x < 0) nF = { x: -nF.x, z: -nF.z };          // front faces Carrera 33A (east)
     const V = { x: -nF.x, z: -nF.z }, U = { x: V.z, z: -V.x }, hl = o.L / 2, dep = o.Wd;
@@ -2913,9 +2928,9 @@ const LM_SELF_APPLY = true;
     // grandstands (OSM footprints): sloped seating rising away from the pitch
     const stands = ['osm:way/1084076911', 'osm:way/1084076912', 'osm:way/1084076913', 'osm:way/1084076914'];
     for (const id of stands) {
-      const P = rawBuilding(id), rb = D.buildings.find(q => q.id === id); if (!P || P.length < 3) continue;
+      const P = footprint(id); if (!P || P.length < 3) continue;
       if (polyArea(P) > 0) P.reverse();
-      const h = Math.min(11, Math.max(5, (rb.hgt || 70) / 10)), ds = P.map(p => Math.hypot(p.x - c.x, p.z - c.z)), d0 = Math.min(...ds), d1 = Math.max(...ds);
+      const h = Math.min(11, Math.max(5, fpHeight(id))), ds = P.map(p => Math.hypot(p.x - c.x, p.z - c.z)), d0 = Math.min(...ds), d1 = Math.max(...ds);
       const H = ds.map(d => 1.1 + (h - 1.1) * (d - d0) / Math.max(1, d1 - d0)), SA = signedArea(P), main = id === 'osm:way/1084076913';
       const seat = main ? col('#3f74b8') : [col('#e0a030'), col('#d7473a'), col('#3f9a5a')][stands.indexOf(id) % 3];
       for (let i = 0; i < P.length; i++) {
@@ -3108,6 +3123,32 @@ const LM_SELF_APPLY = true;
     info('Bosque Municipal', c.x, c.z, 'Entrada (pabellón azul y verde, foto 2026); posición sobre la Cra 16 estimada');
   }
 
+
+  // ============================================================ 11. Universidad Nacional de Colombia, Sede Palmira — main gate on Carrera 32
+  // Commons ref: "Universidad Nacional - panoramio.jpg" (CC BY 3.0 Yama2013; camera E -655 N -1750). Model: folded
+  // (butterfly) concrete canopy on a brick pier over the gatehouse, chain-link gates between brick piers, brick sign
+  // wall with the dark lettering band. Placed where the campus service road leaves Carrera 32 (OSM); ESTIMATED.
+  // (Leopoldo Rother's Facultad de Agronomía building is inside the campus; no usable footprint/photo -> not modelled.)
+  function buildUNAL(add) {
+    const a = D.meta && D.meta.area; if (!a || a[1] > -1745 || a[0] > -700) return;     // only in the city-wide data
+    const gb = new GB(), Un = unit(0.326, -0.945), Vin = unit(-0.945, -0.326);           // world: U along Cra 32 (north), V into campus (west)
+    const fr = new Frame(gb, EN(-664.5, -1736.5), Un, Vin), BR = col('#a9533a'), CO = col('#b9b6ae'), IR = col('#55595c');
+    fr.box(-9.5, 3.5, 0, 3.6, 3.2, 2.6, BR);                                             // gatehouse
+    { const F = fr.face('v', 1.9, -1); F.rect(-10.6, -8.4, 1.0, 2.2, 0.02, C.glass); }
+    fr.box(-7.0, 3.5, 0, 0.8, 0.8, 3.7, BR);                                              // pier under the canopy
+    { const y0 = 4.7, yv = 3.75, u0 = -13.0, u1 = -1.5, um = -7.0, v0 = -1.5, v1 = 8.5;     // butterfly canopy
+      quadUp(gb, fr.W(u0, y0, v0), fr.W(um, yv, v0), fr.W(um, yv, v1), fr.W(u0, y0, v1), CO); quadUp(gb, fr.W(um, yv, v0), fr.W(u1, y0, v0), fr.W(u1, y0, v1), fr.W(um, yv, v1), CO);
+      quadN(gb, fr.W(u0, y0 - 0.18, v0), fr.W(um, yv - 0.18, v0), fr.W(um, yv - 0.18, v1), fr.W(u0, y0 - 0.18, v1), [0, -1, 0], shade(CO, 0.8)); quadN(gb, fr.W(um, yv - 0.18, v0), fr.W(u1, y0 - 0.18, v0), fr.W(u1, y0 - 0.18, v1), fr.W(um, yv - 0.18, v1), [0, -1, 0], shade(CO, 0.8)); }
+    for (const u of [-4.6, 4.6]) fr.box(u, 0.5, 0, 0.9, 0.9, 2.6, BR);
+    { const F = fr.face('v', 0.5, -1); for (const [s0, s1] of [[-4.1, 0], [0, 4.1]]) { F.rect(s0, s0 + 0.08, 0, 2.2, 0.01, IR); F.rect(s1 - 0.08, s1, 0, 2.2, 0.01, IR); F.rect(s0, s1, 2.12, 2.2, 0.01, IR); F.rect(s0, s1, 0.05, 0.12, 0.01, IR); } }
+    fr.box(10.35, 0.4, 0, 11.5, 0.5, 2.3, BR); fr.box(10.35, 0.4, 2.3, 11.8, 0.65, 0.18, shade(BR, 0.85));
+    { const F = fr.face('v', 0.15, -1); F.rect(5.6, 6.9, 1.0, 1.9, 0.01, C.dark); F.rect(7.2, 15.4, 1.45, 1.85, 0.01, C.dark); F.rect(9.4, 13.2, 1.0, 1.3, 0.01, C.dark); }
+    add(gb, 'unal');
+    solid(fr.pts([[-11.3, 1.9], [-7.7, 1.9], [-7.7, 5.1], [-11.3, 5.1]]), 2.6, 'lm:unal-gatehouse'); solid(fr.pts([[4.6, 0.15], [16.1, 0.15], [16.1, 0.65], [4.6, 0.65]]), 2.3, 'lm:unal-wall');
+    const c = fr.P(0, 4);
+    info('Universidad Nacional · Sede Palmira', c.x, c.z, 'Portería sobre la Cra 32 (foto 2004); posición estimada');
+  }
+
   // ------------------------------------------------------------ hook
   HOOKS.buildLandmarksDetailed = () => {
     const t0 = performance.now(), stats = { meshes: 0, tris: 0, by: {} };
@@ -3122,6 +3163,7 @@ const LM_SELF_APPLY = true;
     for (const L of (W.landmarks.church || [])) run('church', () => (/Carmel/i.test(L.n) ? buildCarmen : buildTrinidad)(L, add));
     for (const L of (W.landmarks.market || [])) run('market', () => buildMarket(L, add));
     run('bosque', () => buildBosque(add));
+    run('unal', () => buildUNAL(add));
     HOOKS.landmarkStats = stats;
     console.info('landmarks detailed', Math.round(performance.now() - t0) + 'ms', stats.meshes, 'meshes', stats.tris, 'tris', stats.by, 'replaced', HOOKS.removeBuildingIds.length);
   };
@@ -4417,6 +4459,855 @@ function startlePeds(car) {
 }
 function nearestPed(x, z, r) { let best = null, bd = r; for (const p of PEDS.list) if (p.active && p.down <= 0) { const d = Math.hypot(p.x - x, p.z - z); if (d < bd) { bd = d; best = p; } } return best; }
 
+// ===== 35_combat.js
+// Combat & action: on-foot melee, a fictional mission-only arcade pistol, the fictional "Patrulla Urbana" on foot, and the
+// fictional gang encounter "Los del Callejón". Arcade and non-gory: a hit is a flash + stagger + dust puff, nobody bleeds,
+// and anyone who goes down gets back up (or runs off and leaves the scene a few seconds later). No real gangs, people or agencies.
+// Integration: registers HOOKS.initCombat() / HOOKS.updateCombat(dt, ctx) (already called by 90_main.js). Own input listeners:
+//   X key / left mouse = golpe (punch, punch, kick combo) · right mouse or Z (hold) = apuntar · left mouse / X while aiming = disparar
+//   1 / 2 = puños / pistola · gamepad X golpe, LT apuntar, RT disparar, d-pad ↓ cambiar arma · touch buttons Golpe / Disparar / Arma.
+// Accessibility in SAVE.settings: aimAssist (bool), fxIntensity (0..1), dmgTaken (0.5 | 1), noGuns (bool, melee only).
+// Extra draw calls (only while something is visible): thugs 1, officers 1, dust 1, sparks 1, lines 1, pistol 1, crates 1 = 7.
+// Location of "Los del Callejón": the OSM building tagged industrial/warehouse/shed farthest from Parque Bolívar (verified
+// footprint, OSM ODbL); the crates around it are APPROXIMATED gameplay props, the gang and its story are fictional.
+
+const CB_Y = new THREE.Vector3(0, 1, 0), CB_Z = new THREE.Vector3(0, 0, 1), CB_HIDE = new THREE.Matrix4().makeScale(0, 0, 0);
+const _cbM = new THREE.Matrix4(), _cbQ = new THREE.Quaternion(), _cbQ2 = new THREE.Quaternion(), _cbV = new THREE.Vector3(), _cbS = new THREE.Vector3(), _cbC = new THREE.Color(), _cbLook = new THREE.Vector3();
+const CB_MOVES = [   // jab, cross, kick (kick knocks down)
+  { dur: 0.3, hit: 0.11, dmg: 1, reach: 1.5, arm: 0 },
+  { dur: 0.32, hit: 0.12, dmg: 1, reach: 1.55, arm: 1 },
+  { dur: 0.5, hit: 0.2, dmg: 1.6, reach: 1.75, leg: 1, knock: true },
+];
+const CB_PRICE = { pistol: 25000, ammo: 3000 }, CB_AMMO_BOX = 24, CB_MAXAMMO = 144, CB_NL = 40, CB_NTHUG = 6, CB_NCOP = 6;
+const CB = {
+  ready: false, weapon: 'punos', aiming: false, aimK: 0, aimYaw: 0, lock: null,
+  q: { melee: 0, fire: 0 }, mouseAim: false, keyAim: false, padAim: false, touchAim: false, mouseFire: false, padFire: false, touchFire: false,
+  lmb: null, lastTouch: 0, atk: null, queued: false, combo: 0, comboT: 0, fireCd: 0, holdT: 0, stag: 0, stagX: 0, stagZ: 0,
+  peds: new Map(), pedIdx: new Map(), flashPeds: [], thugs: [], cops: [], actors: [], parked: new Map(),
+  screamT: 0, talkCd: 0, wasOk: true, prev: null, pad: {}, gun: null, mesh: {}, site: null, covers: [], def: null, fight: 0,
+  baseRender: null, render: null, inR: false, ammoWarnT: 0, uiKey: '', fxApplied: -1,
+};
+
+// ---------------------------------------------------------------- settings / inventory
+function cbAssist() { return SAVE.settings.aimAssist !== false; }
+function cbFxK() { const v = SAVE.settings.fxIntensity; return clamp(v === undefined ? 1 : +v, 0, 1); }
+function cbNoGuns() { return !!SAVE.settings.noGuns; }
+function cbDmgK() { return SAVE.settings.dmgTaken ? +SAVE.settings.dmgTaken : 1; }
+function cbInv() { if (!SAVE.combat) SAVE.combat = { pistol: false, ammo: 0, weapon: 'punos' }; return SAVE.combat; }
+function cbGunReady() { const v = cbInv(); return !cbNoGuns() && v.pistol && CB.weapon === 'pistola'; }
+function cbUnlocked() { return Object.keys(SAVE.done).filter(k => MISSIONS.defs.some(d => d.id === k)).length >= 2; }
+function cbSetWeapon(wp) {
+  const v = cbInv();
+  if (wp === 'pistola' && (cbNoGuns() || !v.pistol)) { if (!cbNoGuns()) feed('Sin pistola', 'La armería del Taller Don Efra abre después de 2 encargos.'); wp = 'punos'; }
+  if (CB.weapon === wp) return;
+  CB.weapon = wp; v.weapon = wp; uiSound('tick');
+}
+function cbCanInput() {
+  try { return G.started && !MENU.open && !BIG.open && !(typeof PHONE !== 'undefined' && PHONE.open) && !G.inCar && PLAYER.state === 'ok' && !!G.walker; } catch (e) { return false; }
+}
+function cbApplyFx() {   // accessibility: scale the screen flash / hurt vignette
+  const k = cbFxK(); if (k === CB.fxApplied) return; CB.fxApplied = k;
+  const f = $('flash'); if (f) f.style.filter = k >= 1 ? '' : `opacity(${k})`;
+}
+
+// ---------------------------------------------------------------- sounds (synthesised, like the rest of the game)
+let _cbNoise = null;
+function cbSfx(kind, x, z) {
+  const ctx = AUDIO.ctx, out = AUDIO.master; if (!ctx || !out) return;
+  if (!_cbNoise) { _cbNoise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate); const d = _cbNoise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
+  let g0 = 1, pn = 0; if (x !== undefined) { const p = AUDIO.pan(x, z); g0 = p.g; pn = p.p; if (g0 < 0.02) return; }
+  const P = { hit: [520, 'lowpass', 0.12, 0.32], shot: [2100, 'bandpass', 0.16, 0.42], whoosh: [1500, 'bandpass', 0.13, 0.05], click: [3200, 'highpass', 0.03, 0.06] }[kind]; if (!P) return;
+  const t = ctx.currentTime, src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+  src.buffer = _cbNoise; f.type = P[1]; f.frequency.value = P[0]; g.gain.setValueAtTime(P[3] * g0, t); g.gain.exponentialRampToValueAtTime(0.0005, t + P[2]);
+  src.connect(f); f.connect(g); let node = g;
+  if (ctx.createStereoPanner) { const sp = ctx.createStereoPanner(); sp.pan.value = pn; g.connect(sp); node = sp; }
+  node.connect(out); src.start(t, Math.random() * 0.5); src.stop(t + P[2] + 0.05);
+  if (kind === 'hit' || kind === 'shot') {
+    const o = ctx.createOscillator(), og = ctx.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(kind === 'shot' ? 180 : 120, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+    og.gain.setValueAtTime(0.25 * g0, t); og.gain.exponentialRampToValueAtTime(0.0005, t + 0.14); o.connect(og); og.connect(node); o.start(t); o.stop(t + 0.16);
+  }
+}
+
+// ---------------------------------------------------------------- pooled fx: dust puffs, flashes, tracer / aim lines
+const CBFX = { dust: [], spark: [], lines: [], lpos: null, lcol: null };
+function cbSlot(arr) { let w = 0, wi = 0; for (let i = 0; i < arr.length; i++) { const p = arr[i]; if (p.t >= p.life) return p; const u = p.t / p.life; if (u > w) { w = u; wi = i; } } return arr[wi]; }
+function cbDust(x, y, z, n = 3) {
+  for (let i = 0; i < n; i++) {
+    const p = cbSlot(CBFX.dust), a = Math.random() * TAU, v = 0.6 + Math.random() * 1.2;
+    Object.assign(p, { t: 0, life: 0.55 + Math.random() * 0.35, x, y: y + Math.random() * 0.2, z, vx: Math.cos(a) * v, vy: 0.5 + Math.random() * 0.8, vz: Math.sin(a) * v, s0: 0.25, s1: 0.75 + Math.random() * 0.4, r: a, g: 0.6 });
+  }
+}
+function cbSpark(x, y, z, s, life) {
+  const p = cbSlot(CBFX.spark), k = 0.35 + 0.65 * cbFxK();
+  Object.assign(p, { t: 0, life, x, y, z, vx: 0, vy: 0, vz: 0, s0: s * k, s1: 0, r: Math.random() * TAU, g: 0 });
+}
+function cbLine(ax, ay, az, bx, by, bz, r, g, b, life, slot) {   // slot: fixed slot (aim telegraphs) or a free one (tracers)
+  const L = CBFX.lines; let l;
+  if (slot !== undefined) l = L[slot];
+  else { l = null; let w = -1; for (let i = 12; i < CB_NL; i++) { const q = L[i]; if (q.t >= q.life) { l = q; break; } if (q.t / q.life > w) { w = q.t / q.life; l = q; } } }
+  Object.assign(l, { t: 0, life, ax, ay, az, bx, by, bz, r, g, b });
+}
+function cbFxUpdate(dt) {
+  const parts = (mesh, arr, dust) => {
+    let any = false;
+    for (let i = 0; i < arr.length; i++) {
+      const p = arr[i];
+      if (p.t >= p.life) { mesh.setMatrixAt(i, CB_HIDE); continue; }
+      p.t += dt; const u = Math.min(1, p.t / p.life); any = true;
+      p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; p.vy -= p.g * dt; p.vx *= 0.95; p.vz *= 0.95;
+      const s = dust ? (p.s0 + (p.s1 - p.s0) * Math.sqrt(u)) * (1 - u * u * u) : p.s0 * (1 - u * 0.7);
+      _cbQ.setFromAxisAngle(CB_Y, p.r); _cbV.set(p.x, p.y, p.z); _cbS.set(s, dust ? s * 0.8 : s * 1.6, s); _cbM.compose(_cbV, _cbQ, _cbS); mesh.setMatrixAt(i, _cbM);
+    }
+    mesh.visible = any; if (any) mesh.instanceMatrix.needsUpdate = true; else if (mesh._wasAny) { mesh.instanceMatrix.needsUpdate = true; }
+    mesh._wasAny = any;
+  };
+  parts(CB.mesh.dust, CBFX.dust, true); parts(CB.mesh.spark, CBFX.spark, false);
+  const L = CBFX.lines, P = CBFX.lpos, C = CBFX.lcol; let any = false;
+  for (let i = 0; i < CB_NL; i++) {
+    const l = L[i], j = i * 6;
+    if (l.t >= l.life) { if (P[j + 1] !== -50) { P.fill(0, j, j + 6); P[j + 1] = P[j + 4] = -50; C.fill(0, j, j + 6); any = true; } continue; }
+    l.t += dt; const k = l.aim ? 0.7 + 0.3 * Math.sin(performance.now() / 40) : Math.max(0, 1 - l.t / l.life);
+    P[j] = l.ax; P[j + 1] = l.ay; P[j + 2] = l.az; P[j + 3] = l.bx; P[j + 4] = l.by; P[j + 5] = l.bz;
+    C[j] = l.r * k; C[j + 1] = l.g * k; C[j + 2] = l.b * k; C[j + 3] = l.r * k * 0.5; C[j + 4] = l.g * k * 0.5; C[j + 5] = l.b * k * 0.5;
+    any = true;
+  }
+  const lm = CB.mesh.lines;
+  if (any) { lm.geometry.attributes.position.needsUpdate = true; lm.geometry.attributes.color.needsUpdate = true; }
+  lm.visible = L.some(l => l.t < l.life);
+}
+
+// ---------------------------------------------------------------- meshes
+function cbInitMeshes() {
+  const inst = (geo, mat, n, shadow) => {
+    const m = new THREE.InstancedMesh(geo, mat, n); m.frustumCulled = false; m.castShadow = !!shadow && QL.shadow > 0; m.visible = false;
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    for (let i = 0; i < n; i++) { m.setMatrixAt(i, CB_HIDE); m.setColorAt(i, _cbC.setRGB(1, 1, 1)); }
+    scene.add(m); return m;
+  };
+  CB.mesh.thug = inst(personGeo({ shirt: '#3a3e46', pants: '#202429', skin: '#8a5a40', hair: '#1a1410', hat: 'cap', capColor: '#9c2f25' }), MAT_V, CB_NTHUG, true);
+  CB.mesh.cop = inst(personGeo({ shirt: '#9fc2e6', pants: '#1c2a46', skin: '#a8775a', hat: 'cap', capColor: '#f1f3f2' }), MAT_V, CB_NCOP, true);
+  CB.mesh.dust = inst(new THREE.IcosahedronGeometry(0.3, 0), new THREE.MeshLambertMaterial({ color: '#bcae93', transparent: true, opacity: 0.6, depthWrite: false }), 40);
+  CB.mesh.spark = inst(new THREE.OctahedronGeometry(0.18, 0), new THREE.MeshBasicMaterial({ color: '#ffd27a', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }), 24);
+  for (let i = 0; i < 40; i++) CBFX.dust.push({ t: 1, life: 1 });
+  for (let i = 0; i < 24; i++) CBFX.spark.push({ t: 1, life: 1 });
+  CBFX.lpos = new Float32Array(CB_NL * 6); CBFX.lcol = new Float32Array(CB_NL * 6);
+  for (let i = 0; i < CB_NL; i++) { CBFX.lines.push({ t: 1, life: 1 }); CBFX.lpos[i * 6 + 1] = CBFX.lpos[i * 6 + 4] = -50; }
+  const lg = new THREE.BufferGeometry();
+  lg.setAttribute('position', new THREE.BufferAttribute(CBFX.lpos, 3).setUsage(THREE.DynamicDrawUsage));
+  lg.setAttribute('color', new THREE.BufferAttribute(CBFX.lcol, 3).setUsage(THREE.DynamicDrawUsage));
+  CB.mesh.lines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  CB.mesh.lines.frustumCulled = false; CB.mesh.lines.visible = false; scene.add(CB.mesh.lines);
+  // the arcade pistol (attached to the walker's right arm once the walker exists)
+  const gb = new GB(), dk = col('#26282b'), md = col('#4f5459');
+  gb.box(0, -0.67, 0, 0.065, 0.25, 0.05, dk); gb.box(-0.065, -0.585, 0, 0.12, 0.055, 0.045, md); gb.box(0.03, -0.72, 0, 0.015, 0.03, 0.02, col('#e2701f'));   // orange tip: toy-like arcade prop
+  CB.gun = new THREE.Mesh(gb.build(), MAT_V); CB.gun.visible = false;
+  for (let i = 0; i < CB_NTHUG; i++) CB.thugs.push(cbActor('thug', i));
+  for (let i = 0; i < CB_NCOP; i++) CB.cops.push(cbActor('cop', CB_NTHUG + i));
+  CB.actors = CB.thugs.concat(CB.cops);
+}
+function cbActor(kind, slot) { return { kind, slot, active: false, x: 0, y: 0, z: 0, a: 0, hp: 3, down: 0, downMax: 1, stag: 0, nx: 0, nz: 0, flash: 0, state: 'idle', t: 0, cd: 0, atk: 0, aimT: 0, armed: false, crouch: 0, lean: 0, phase: 0, cover: -1, peeks: 0, defeated: false, patrol: null, arrest: 0, life: 0 }; }
+
+// ---------------------------------------------------------------- helpers
+function cbTurn(a, ta, k) { const d = ((ta - a + Math.PI) % TAU + TAU) % TAU - Math.PI; return a + d * Math.min(1, k); }
+function cbYawTo(ax, az, bx, bz) { return Math.atan2(-(bz - az), bx - ax); }
+function cbMove(o, tx, tz, sp, dt, stopAt = 0) {
+  const dx = tx - o.x, dz = tz - o.z, L = Math.hypot(dx, dz);
+  if (L > stopAt + 0.02) {
+    const st = Math.min(L - stopAt, sp * dt); o.x += dx / L * st; o.z += dz / L * st;
+    const h = collideCircle(o.x, o.z, 0.32); if (h) { o.x += h.x; o.z += h.z; }
+    o.phase += st * 2.8; o.a = cbTurn(o.a, Math.atan2(-dz, dx), 12 * dt);
+  }
+  o.y = groundAt(o.x, o.z); return L;
+}
+function cbMe() { return G.inCar ? G.car : G.walker; }
+function cbRayWall(x, z, fx, fz, R) {   // distance to the first solid (≥1.5 m tall) thing along a horizontal ray
+  for (let d = 0.6; d < R; d += 0.7) {
+    const px = x + fx * d, pz = z + fz * d;
+    for (const b of bGrid.query(px, pz, 0, [], QSTAMP++)) {
+      if (b.h < 1.5 || px < b.bb[0] || px > b.bb[2] || pz < b.bb[1] || pz > b.bb[3]) continue;
+      if (pointInPoly(px, pz, b.P)) return d;
+    }
+  }
+  return R;
+}
+function cbPedState(p) {
+  let s = CB.peds.get(p);
+  if (!s) { const young = Math.random() < 0.34; s = { hp: 3, fighter: young && Math.random() < 0.15, flee: 0, v0: 0, hostile: 0, atk: 0, cd: 0, stag: 0, nx: 0, nz: 0, afterDown: false, lean: 0, seen: true }; CB.peds.set(p, s); }
+  return s;
+}
+function cbSnapRing(p) {   // re-attach a displaced pedestrian to the nearest point of its sidewalk ring (no sliding back)
+  const r = p.ring; if (!r || !r.P || !r.cum) return;
+  let bd = Infinity, bs = p.s;
+  for (let k = 0; k < r.P.length; k++) {
+    const a = r.P[k], b = r.P[(k + 1) % r.P.length], c = segClosest(p.x, p.z, a.x, a.z, b.x, b.z), d = Math.hypot(c.x - p.x, c.z - p.z);
+    if (d < bd) { bd = d; bs = (r.cum[k] || 0) + Math.hypot(c.x - a.x, c.z - a.z); }
+  }
+  p.s = bs;
+}
+function cbFlee(p, dur) {
+  const s = cbPedState(p), me = cbMe(); if (!p.ring || s.hostile > 0) return;
+  if (s.flee <= 0) s.v0 = p.v;
+  s.flee = dur; cbSnapRing(p); p.v = 3.2 + Math.random() * 0.8; p.jump = 0.5; p.talkT = 0;
+  const q = ringPoint(p.ring, p.s); p.dir = (q.dx * (p.x - me.x) + q.dz * (p.z - me.z)) >= 0 ? 1 : -1;
+}
+const CB_SCREAMS = ['¡Auxilio!', '¡Ay, Dios mío!', '¡Corran!', '¡Llamen a la Patrulla!', '¡Uy, qué es eso!', '¡No, no, no!'];
+function cbPanic(x, z, r, except) {
+  let n = 0;
+  for (const p of PEDS.list) {
+    if (!p.active || p === except || p.down > 0 || p.boarding) continue;
+    if (Math.hypot(p.x - x, p.z - z) > r) continue;
+    const s = cbPedState(p);
+    if (s.fighter && Math.hypot(p.x - x, p.z - z) < 7 && !cbGunReady() && Math.random() < 0.5) { s.hostile = 9; continue; }
+    if (s.hostile <= 0) { cbFlee(p, 6 + Math.random() * 5); if (n++ < 2) AUDIO.shout(p.x, p.z); }
+  }
+  if (n && CB.talkCd <= 0) { CB.talkCd = 7; talk('Peatón', CB_SCREAMS[Math.floor(Math.random() * CB_SCREAMS.length)]); }
+}
+function cbWitnessed(x, z, except) {
+  for (const p of PEDS.list) if (p.active && p !== except && p.down <= 0 && Math.hypot(p.x - x, p.z - z) < 22) return true;
+  for (const pt of PURSUIT.patrols) if (pt.active && Math.hypot(pt.x - x, pt.z - z) < 70 && lineOfSight(pt.x, pt.z, x, z)) return true;
+  return CB.cops.some(o => o.active && Math.hypot(o.x - x, o.z - z) < 40);
+}
+function cbInFight() { return CB.def && MISSIONS.active === CB.def && MISSIONS.stage === 1 && CB.site && Math.hypot(cbMe().x - CB.site.x, cbMe().z - CB.site.z) < 90; }
+function cbHurtPlayer(n, why) {   // armour absorbs first, the rest goes through PLAYER.hurt (which triggers HERIDO at 0)
+  if (PLAYER.state !== 'ok' || !G.started) return;
+  n *= cbDmgK(); const a = Math.min(PLAYER.armor, n); PLAYER.armor -= a; const rest = n - a;
+  if (rest > 0.01) PLAYER.hurt(rest, why); else { PLAYER.lastHurt = performance.now(); try { hurtFlash(); } catch (e) { } }
+  if (!G.inCar) { CB.stag = 0.28; CB.atk = null; }
+}
+
+// ---------------------------------------------------------------- targeting & hits
+function cbPickTarget(x, z, yaw, range, cone, needLos) {
+  const fx = Math.cos(yaw), fz = -Math.sin(yaw); let best = null, bs = Infinity;
+  const test = (o, hostile) => {
+    const dx = o.x - x, dz = o.z - z, d = Math.hypot(dx, dz); if (d > range || d < 0.05) return;
+    const ang = Math.acos(clamp((dx * fx + dz * fz) / d, -1, 1)); if (ang > cone) return;
+    const sc = d * 0.5 + ang * 6 - (hostile ? 4 : 0); if (sc >= bs) return;
+    if (needLos && !lineOfSight(x, z, o.x, o.z)) return;
+    bs = sc; best = o;
+  };
+  for (const p of PEDS.list) if (p.active && p.down <= 0 && !p.boarding) test(p, (CB.peds.get(p)?.hostile || 0) > 0);
+  for (const o of CB.actors) if (o.active && o.down <= 0 && o.state !== 'flee' && o.state !== 'leave') test(o, true);
+  return best;
+}
+function cbHit(o, dmg, fromX, fromZ, kind) {
+  const dx = o.x - fromX, dz = o.z - fromZ, d = Math.hypot(dx, dz) || 1, nx = dx / d, nz = dz / d;
+  cbSpark(o.x - nx * 0.25, (o.y || 0) + 1.25, o.z - nz * 0.25, kind === 'bullet' ? 0.45 : 0.6, 0.1);
+  cbDust(o.x, (o.y || 0) + 0.3, o.z, kind === 'punch' ? 1 : 3);
+  cbSfx('hit', o.x, o.z);
+  if (o.kind) cbHitActor(o, dmg, nx, nz, kind); else cbHitPed(o, dmg, nx, nz, kind);
+}
+function cbHitPed(p, dmg, nx, nz, kind) {
+  const s = cbPedState(p); s.hp -= dmg; cbFlashPed(p); p.talkT = 0;
+  if (kind === 'bullet' || kind === 'car' || s.hp <= 0 || kind === 'kick') {
+    p.down = kind === 'bullet' ? 4.5 : 3.2; p.dodge = 0; s.hostile = 0; s.hp = 3; s.afterDown = true; s.stag = 0; s.atk = 0;
+  } else { p.dodge = 0.35; s.stag = 0.3; s.nx = nx; s.nz = nz; s.atk = 0; if (s.fighter && kind !== 'bullet') s.hostile = 10; }
+  AUDIO.shout(p.x, p.z);
+  cbPanic(p.x, p.z, kind === 'bullet' ? 35 : 15, p);
+  if (kind !== 'car' && !cbInFight()) { const v = kind === 'bullet' ? 1.2 : 0.7, seen = cbWitnessed(p.x, p.z, p); PURSUIT.addHeat(seen ? v : v * 0.3, p.x, p.z, seen ? 'Los testigos reportaron una agresión.' : 'Alguien reportó una pelea.'); }
+}
+function cbFlashPed(p) {
+  const i = CB.pedIdx.get(p), m = PEDS.body; if (i === undefined || !m || !m.instanceColor) return;
+  let f = CB.flashPeds.find(q => q.i === i);
+  if (!f) { const c = new THREE.Color(); m.getColorAt(i, c); CB.flashPeds.push(f = { i, c, t: 0 }); }
+  f.t = 0.12; const k = 1 + 1.3 * cbFxK(); _cbC.copy(f.c).multiplyScalar(k); m.setColorAt(i, _cbC); m.instanceColor.needsUpdate = true;
+}
+function cbHitActor(o, dmg, nx, nz, kind) {
+  o.flash = 0.12; o.hp -= dmg; o.atk = 0; o.aimT = 0;
+  if (o.kind === 'cop') { o.arrest = 0; if (kind !== 'car' || PURSUIT.level < 2) PURSUIT.addHeat(kind === 'bullet' ? 2.2 : 1.2, o.x, o.z, 'Agrediste a un agente de la Patrulla Urbana.'); }
+  if (o.hp <= 0 || kind === 'car') {
+    o.down = o.downMax = o.kind === 'cop' ? 3.5 : 2.8; o.state = 'down';
+    if (o.kind === 'thug') { if (!o.defeated) { o.defeated = true; cbDust(o.x, 0.2, o.z, 4); } o.hp = 0; } else o.hp = 3;
+    if (o.cover >= 0 && CB.covers[o.cover]?.by === o) CB.covers[o.cover].by = null; o.cover = -1;
+  } else if (kind === 'kick') { o.down = o.downMax = 1.4; }
+  else { o.stag = 0.3; o.nx = nx; o.nz = nz; }
+}
+
+// ---------------------------------------------------------------- player: melee, aim, fire, pose
+function cbStartMelee() {
+  const w = G.walker; if (!w) return;
+  if (CB.atk) { if (CB.atk.t > CB.atk.m.hit) CB.queued = true; return; }
+  const idx = CB.comboT > 0 ? (CB.combo + 1) % 3 : 0; CB.combo = idx;
+  const tgt = cbPickTarget(w.x, w.z, w.a, 3.2, 1.2) || cbPickTarget(w.x, w.z, w.a, 1.9, Math.PI);
+  CB.atk = { m: CB_MOVES[idx], t: 0, tgt, done: false }; cbSfx('whoosh');
+}
+function cbFire() {
+  const inv = cbInv(), w = G.walker; if (!cbGunReady() || !w) return;
+  if (inv.ammo <= 0) { cbSfx('click'); CB.fireCd = 0.35; if (CB.ammoWarnT <= 0) { CB.ammoWarnT = 6; feed('Sin balas', 'Compra munición en la armería del Taller Don Efra.'); } return; }
+  inv.ammo--; CB.fireCd = 0.3; CB.holdT = Math.max(CB.holdT, 0.6);
+  const yaw = CB.aimYaw, fx = Math.cos(yaw), fz = -Math.sin(yaw), rx = -fz, rz = fx;
+  const sx = w.x + fx * 0.8 + rx * 0.27, sz = w.z + fz * 0.8 + rz * 0.27, sy = w.y + 1.43;
+  let hitD = cbRayWall(w.x, w.z, fx, fz, 45), hitO = null;
+  const test = o => {
+    const dx = o.x - w.x, dz = o.z - w.z, along = dx * fx + dz * fz; if (along <= 0.3 || along >= hitD) return;
+    if (Math.abs(-dx * fz + dz * fx) < (CB.lock === o ? 0.7 : 0.42)) { hitD = along; hitO = o; }
+  };
+  for (const p of PEDS.list) if (p.active && p.down <= 0 && !p.boarding) test(p);
+  for (const o of CB.actors) if (o.active && o.down <= 0) test(o);
+  if (hitO && hitO.kind === 'thug' && hitO.crouch > 0.5 && Math.random() < 0.55) { hitD = Math.max(0.5, hitD - 0.9); hitO = null; }   // bullet hits the crate
+  const ex = w.x + fx * hitD, ez = w.z + fz * hitD, ey = hitO ? (hitO.y || 0) + 1.2 : sy - 0.05;
+  cbLine(sx, sy, sz, ex, ey, ez, 1, 0.88, 0.5, 0.08);
+  cbSpark(sx + fx * 0.15, sy, sz + fz * 0.15, 0.55, 0.06); cbSfx('shot');
+  if (hitO) cbHit(hitO, 1.6, w.x, w.z, 'bullet'); else cbDust(ex - fx * 0.2, ey, ez - fz * 0.2, 2);
+  if (cbInFight()) PURSUIT.addHeat(0.15, w.x, w.z, 'Se escucharon disparos en las bodegas.');
+  else PURSUIT.addHeat(1.1, w.x, w.z, 'Reportaron disparos. La Patrulla Urbana va en camino.');
+  cbPanic(w.x, w.z, 40);
+}
+function cbPlayer(dt) {
+  const w = G.walker, can = cbCanInput();
+  if (!can) { CB.q.melee = CB.q.fire = 0; CB.aiming = false; if (G.inCar || PLAYER.state !== 'ok') { CB.atk = null; CB.holdT = 0; } }
+  CB.fireCd -= dt; CB.holdT -= dt; CB.comboT -= dt; CB.ammoWarnT -= dt;
+  if (!w || G.inCar) { CB.aimK = 0; CB.prev = null; return; }
+  // aiming (pistol only); touch aims along the walker's facing with a wide assist cone
+  CB.aiming = can && cbGunReady() && (CB.mouseAim || CB.keyAim || CB.padAim || CB.touchAim || CB.holdT > 0);
+  CB.aimK += ((CB.aiming ? 1 : 0) - CB.aimK) * Math.min(1, 10 * dt);
+  CB.lock = null;
+  if (CB.aiming) {
+    const touchy = IS_TOUCH && CB.touchAim, base = touchy ? w.a : camForwardYaw();
+    const cone = touchy ? 0.75 : cbAssist() ? 0.26 : 0;
+    const t = cone > 0 ? cbPickTarget(w.x, w.z, base, 38, cone, true) : null;
+    const yaw = t ? cbYawTo(w.x, w.z, t.x, t.z) : base; CB.lock = t;
+    CB.aimYaw = CB.aimK < 0.2 ? yaw : cbTurn(CB.aimYaw, yaw, 22 * dt);
+    w.a = CB.aimYaw;
+    if (CB.prev && CB.aimK > 0.3) { const dx = w.x - CB.prev.x, dz = w.z - CB.prev.z; if (Math.hypot(dx, dz) < 1) { w.x = CB.prev.x + dx * 0.55; w.z = CB.prev.z + dz * 0.55; } }   // slower while aiming
+  } else CB.aimYaw = w.a;
+  if (!CB.prev) CB.prev = { x: 0, z: 0 }; CB.prev.x = w.x; CB.prev.z = w.z;
+  // actions
+  if (can && (CB.q.fire > 0 || CB.mouseFire || CB.padFire || CB.touchFire) && CB.fireCd <= 0 && cbGunReady()) { if (!CB.aiming) { CB.holdT = 0.6; CB.aiming = true; const t = cbPickTarget(w.x, w.z, w.a, 38, IS_TOUCH || cbAssist() ? 0.6 : 0.05, true); CB.lock = t; CB.aimYaw = t ? cbYawTo(w.x, w.z, t.x, t.z) : w.a; w.a = CB.aimYaw; } cbFire(); }
+  CB.q.fire = 0;
+  if (can && CB.q.melee > 0) cbStartMelee();
+  CB.q.melee = 0;
+  if (CB.atk) {
+    const A = CB.atk; A.t += dt;
+    if (A.tgt && (!A.tgt.active || A.tgt.down > 0)) A.tgt = null;
+    if (A.tgt) {
+      const d = Math.hypot(A.tgt.x - w.x, A.tgt.z - w.z); w.a = cbTurn(w.a, cbYawTo(w.x, w.z, A.tgt.x, A.tgt.z), 18 * dt);
+      if (d > 1.05 && A.t < A.m.hit) { const st = Math.min(d - 1.05, 4 * dt); w.x += (A.tgt.x - w.x) / d * st; w.z += (A.tgt.z - w.z) / d * st; const h = collideCircle(w.x, w.z, 0.35); if (h) { w.x += h.x; w.z += h.z; } }
+    }
+    if (!A.done && A.t >= A.m.hit) {
+      A.done = true;
+      let t = A.tgt; const fx = Math.cos(w.a), fz = -Math.sin(w.a);
+      if (t) { const dx = t.x - w.x, dz = t.z - w.z, d = Math.hypot(dx, dz); if (d > A.m.reach || (dx * fx + dz * fz) / (d || 1) < 0.3) t = null; }
+      if (!t) t = cbPickTarget(w.x, w.z, w.a, A.m.reach, 0.9);
+      if (t) cbHit(t, A.m.dmg, w.x, w.z, A.m.knock ? 'kick' : 'punch');
+    }
+    if (A.t >= A.m.dur) { CB.atk = null; CB.comboT = 0.45; if (CB.queued) { CB.queued = false; cbStartMelee(); } }
+  }
+  // stagger when hit
+  if (CB.stag > 0) CB.stag -= dt;
+  cbPose();
+}
+function cbPose() {
+  const w = G.walker; if (!w) return;
+  if (CB.gun && CB.gun.parent !== w.arms[1]) w.arms[1].add(CB.gun);
+  if (CB.gun) CB.gun.visible = cbGunReady();
+  let lean = 0;
+  if (CB.aimK > 0.02 && cbGunReady()) { const k = CB.aimK; w.arms[1].rotation.z = lerp(w.arms[1].rotation.z, 1.57, k); w.arms[0].rotation.z = lerp(w.arms[0].rotation.z, 1.3, k); }
+  if (CB.atk) {
+    const A = CB.atk, m = A.m, e = A.t < m.hit ? A.t / m.hit : Math.max(0, 1 - (A.t - m.hit) / (m.dur - m.hit));
+    if (m.leg !== undefined) { w.legs[m.leg].rotation.z = e * 1.45; lean += e * 0.16; }
+    else { w.arms[m.arm].rotation.z = e * 1.6; lean -= e * 0.1; }
+  }
+  if (CB.stag > 0) lean += (CB.stag / 0.28) * 0.35;
+  w.root.rotation.y = w.a; w.root.rotation.z = lean;
+}
+
+// ---------------------------------------------------------------- pedestrians (state on top of PEDS.list)
+function cbPeds(dt) {
+  const me = cbMe(), onFoot = !G.inCar && PLAYER.state === 'ok';
+  let matDirty = false;
+  for (const f of CB.flashPeds) { f.t -= dt; if (f.t <= 0) { PEDS.body.setColorAt(f.i, f.c); PEDS.body.instanceColor.needsUpdate = true; } }
+  CB.flashPeds = CB.flashPeds.filter(f => f.t > 0);
+  for (const [p, s] of CB.peds) {
+    if (!p.active) { CB.peds.delete(p); continue; }
+    s.lean = 0;
+    if (s.afterDown && p.down <= 0) { s.afterDown = false; cbFlee(p, 8); }
+    if (s.flee > 0) { s.flee -= dt; if (s.flee <= 0 && s.v0) p.v = s.v0; }
+    if (s.stag > 0) { s.stag -= dt; p.x += s.nx * 2.2 * dt; p.z += s.nz * 2.2 * dt; s.lean = 0.35 * (s.stag / 0.3); if (s.stag <= 0 && s.hostile <= 0) { cbSnapRing(p); cbFlee(p, 6); } }
+    if (s.hostile > 0 && p.down <= 0) {
+      const d = Math.hypot(me.x - p.x, me.z - p.z);
+      s.hostile -= dt; s.cd -= dt; p.talkT = 0.3; p.dodge = 0;
+      if (!onFoot || d > 25) s.hostile = 0;
+      else if (s.atk > 0) { s.atk -= dt; s.lean = -0.3; if (s.atk <= 0) { if (d < 1.6) { cbHurtPlayer(4.5, 'pelea'); cbSfx('hit', p.x, p.z); } s.cd = 1.1; } }
+      else if (s.stag <= 0) {
+        if (d > 1.1) { const st = Math.min(d - 1.05, 3.1 * dt); p.x += (me.x - p.x) / d * st; p.z += (me.z - p.z) / d * st; const h = collideCircle(p.x, p.z, 0.3); if (h) { p.x += h.x; p.z += h.z; } p.phase += dt * 9; }
+        else if (s.cd <= 0) s.atk = 0.42;
+      }
+      if (s.hostile <= 0) { p.talkT = 0; cbSnapRing(p); }
+    }
+    if (s.lean && p.down <= 0) {   // re-pose this instance (lean back on stagger, forward on a swing)
+      const i = CB.pedIdx.get(p); if (i === undefined) continue;
+      _cbQ.setFromAxisAngle(CB_Y, p.a); _cbQ2.setFromAxisAngle(CB_Z, s.lean); _cbQ.multiply(_cbQ2);
+      _cbS.setScalar(p.sc); _cbV.set(p.x, p.onRoad ? 0 : KERB, p.z); _cbM.compose(_cbV, _cbQ, _cbS);
+      PEDS.body.setMatrixAt(i, _cbM); PEDS.head.setMatrixAt(i, _cbM); if (p.hat) PEDS.hat.setMatrixAt(i, _cbM); matDirty = true;
+    }
+  }
+  if (matDirty) { PEDS.body.instanceMatrix.needsUpdate = true; PEDS.head.instanceMatrix.needsUpdate = true; PEDS.hat.instanceMatrix.needsUpdate = true; }
+}
+
+// ---------------------------------------------------------------- enemy shots (telegraphed with an aim line first)
+function cbPlayerCovered(o) {
+  const me = cbMe(); if (G.inCar) return false;
+  for (const c of CB.covers) {
+    const dx = c.x - me.x, dz = c.z - me.z, d = Math.hypot(dx, dz); if (d > 1.5) continue;
+    const ox = o.x - me.x, oz = o.z - me.z, od = Math.hypot(ox, oz) || 1;
+    if ((dx * ox + dz * oz) / ((d || 1) * od) > 0.45) return true;
+  }
+  return false;
+}
+function cbEnemyShot(o, dmg, base) {
+  const me = cbMe(), tx = me.x, tz = me.z, ty = (me.y || 0) + (G.inCar ? 1.0 : 1.3);
+  const sx = o.x + Math.cos(o.a) * 0.55, sz = o.z - Math.sin(o.a) * 0.55, sy = o.y + 1.38;
+  const d = Math.hypot(tx - sx, tz - sz), sp = G.inCar ? G.car.speed : G.walker.speed;
+  let p = base - Math.min(0.25, d * 0.007) - Math.min(0.25, sp * 0.04); if (cbPlayerCovered(o)) p *= 0.3;
+  const hit = Math.random() < p && lineOfSight(sx, sz, tx, tz);
+  let ex = tx, ez = tz, ey = ty;
+  if (!hit) { const side = Math.random() < 0.5 ? -1 : 1, ux = (tx - sx) / (d || 1), uz = (tz - sz) / (d || 1), off = 0.9 + Math.random() * 0.9; ex = tx + ux * 6 + -uz * side * off; ez = tz + uz * 6 + ux * side * off; ey = ty + (Math.random() - 0.5) * 0.6; }
+  cbLine(sx, sy, sz, ex, ey, ez, 1, 0.78, 0.45, 0.09); cbSpark(sx, sy, sz, 0.45, 0.06); cbSfx('shot', sx, sz);
+  if (hit) { if (G.inCar) { G.car.damage = Math.min(100, G.car.damage + 1.5); cbHurtPlayer(dmg * 0.35, 'disparo'); } else cbHurtPlayer(dmg, 'disparo'); }
+  else cbDust(ex, Math.max(0.2, ey - 0.8), ez, 1);
+  cbPanic(sx, sz, 30);
+}
+function cbAimLine(o) { const me = cbMe(); cbLine(o.x + Math.cos(o.a) * 0.55, o.y + 1.38, o.z - Math.sin(o.a) * 0.55, me.x, (me.y || 0) + (G.inCar ? 1.0 : 1.3), me.z, 0.95, 0.12, 0.08, 0.06, o.slot); CBFX.lines[o.slot].aim = true; }
+
+// ---------------------------------------------------------------- Patrulla Urbana on foot (heat ≥ 2), shooting at heat 3
+function cbCops(dt) {
+  const me = cbMe(), lvl = PURSUIT.level, ok = PLAYER.state === 'ok', speed = G.inCar ? G.car.speed : 0;
+  // officers get out of patrol cars that reach the player
+  if (lvl >= 2 && ok) for (const pt of PURSUIT.patrols) {
+    if (!pt.active || CB.parked.has(pt)) continue;
+    const d = Math.hypot(pt.x - me.x, pt.z - me.z);
+    if (d < 30 && (!G.inCar || speed < 3) && (pt.v || 0) < 16) {
+      const rec = { x: pt.x, z: pt.z, a: pt.a }; CB.parked.set(pt, rec); pt.v = 0;
+      for (const s of [1, -1]) {
+        const o = CB.cops.find(c => !c.active); if (!o) break;
+        let x = pt.x + Math.sin(pt.a) * 1.4 * s, z = pt.z + Math.cos(pt.a) * 1.4 * s;
+        if (collideCircle(x, z, 0.35)) { x = pt.x - Math.sin(pt.a) * 1.4 * s; z = pt.z - Math.cos(pt.a) * 1.4 * s; }
+        Object.assign(o, { active: true, x, z, y: groundAt(x, z), a: cbYawTo(x, z, me.x, me.z), hp: 3, down: 0, stag: 0, state: 'chase', cd: 1.5 + Math.random(), atk: 0, aimT: 0, patrol: pt, arrest: 0, life: 0, crouch: 0, lean: 0 });
+      }
+      feed('Patrulla Urbana', 'Los agentes se bajaron de la patrulla.', '#3a6be0');
+    }
+  }
+  // keep parked patrols in place while their crew is out
+  for (const [pt, r] of CB.parked) {
+    const crew = CB.cops.some(o => o.active && o.patrol === pt);
+    if (!pt.active || !crew) { CB.parked.delete(pt); continue; }
+    pt.x = r.x; pt.z = r.z; pt.a = r.a; pt.v = 0; pt.vx = pt.vz = 0; pt.fx = Math.cos(r.a); pt.fz = -Math.sin(r.a);
+    pt.mesh.position.set(r.x, groundAt(r.x, r.z) > 0 ? KERB : 0, r.z); pt.mesh.rotation.y = r.a;
+  }
+  for (const o of CB.cops) {
+    if (!o.active) continue;
+    o.life += dt; o.cd -= dt; if (o.flash > 0) o.flash -= dt; o.lean = 0; o.crouch = 0;
+    const dx = me.x - o.x, dz = me.z - o.z, d = Math.hypot(dx, dz);
+    if (d > 90) { o.active = false; continue; }
+    if (o.down > 0) { o.down -= dt; if (o.down <= 0) o.state = lvl >= 1 ? 'chase' : 'leave'; continue; }
+    if (o.stag > 0) { o.stag -= dt; o.x += o.nx * 2 * dt; o.z += o.nz * 2 * dt; o.lean = 0.35; continue; }
+    const car = o.patrol && o.patrol.active ? CB.parked.get(o.patrol) : null;
+    if (o.state !== 'leave' && (lvl < 2 || !ok || (G.inCar && speed > 4 && d > 12))) o.state = 'leave';
+    if (o.state === 'leave') {
+      const tx = car ? car.x + Math.sin(car.a) * 1.4 : o.x - dx, tz = car ? car.z + Math.cos(car.a) * 1.4 : o.z - dz;
+      const L = cbMove(o, tx, tz, 4.6, dt);
+      if ((car && L < 1.2) || o.life > 60 || (!car && d > 35)) { o.active = false; }
+      if (!car) o.life += dt * 4;
+      continue;
+    }
+    if (d < 40 && lineOfSight(o.x, o.z, me.x, me.z)) { PURSUIT.lkp = { x: me.x, z: me.z }; PURSUIT.noContact = 0; }
+    if (o.state === 'aim') {
+      o.a = cbTurn(o.a, cbYawTo(o.x, o.z, me.x, me.z), 14 * dt); o.aimT -= dt; cbAimLine(o);
+      if (o.aimT <= 0) { cbEnemyShot(o, 6, 0.55); o.state = 'chase'; o.cd = 2.2 + Math.random() * 1.2; }
+      continue;
+    }
+    // chase / arrest
+    const arrestR = G.inCar ? 2.8 : 1.35;
+    cbMove(o, me.x, me.z, 4.4, dt, arrestR * 0.8);
+    if (lvl >= 3 && !cbNoGuns() && o.cd <= 0 && d > 5 && d < 28 && lineOfSight(o.x, o.z, me.x, me.z)) { o.state = 'aim'; o.aimT = 0.8; continue; }
+    if (d < arrestR && (!G.inCar || speed < 1)) {
+      o.arrest += dt;
+      if (o.arrest > 1.8) { cbClearCops(); onBusted(); return; }
+    } else o.arrest = Math.max(0, o.arrest - dt);
+  }
+}
+function cbClearCops() { for (const o of CB.cops) o.active = false; CB.parked.clear(); }
+
+// ---------------------------------------------------------------- "Los del Callejón" thugs (cover-to-cover)
+function cbCoverPos(c, px, pz) { const dx = c.x - px, dz = c.z - pz, d = Math.hypot(dx, dz) || 1; return { x: c.x + dx / d * 1.05, z: c.z + dz / d * 1.05 }; }
+function cbPickCover(o, px, pz) {
+  if (o.cover >= 0 && CB.covers[o.cover]?.by === o) CB.covers[o.cover].by = null;
+  let best = -1, bs = Infinity;
+  CB.covers.forEach((c, i) => {
+    if (c.by) return; const dp = Math.hypot(c.x - px, c.z - pz); if (dp < 5) return;
+    const sc = Math.abs(dp - 11) + Math.hypot(c.x - o.x, c.z - o.z) * 0.35 + (i === o.cover ? 5 : 0) + Math.random() * 2;
+    if (sc < bs) { bs = sc; best = i; }
+  });
+  if (best >= 0) CB.covers[best].by = o; o.cover = best;
+}
+const CB_TAUNTS = ['¡Ey, sapo! ¿Usted qué busca por acá? ¡Abrase!', '¡Esta es zona de nosotros, parce!', '¡Agárrenlo, agárrenlo!', '¡Uy, este sí es aletoso!', '¡Me las va a pagar!'];
+function cbThugs(dt) {
+  const me = cbMe(), ok = PLAYER.state === 'ok';
+  for (const o of CB.thugs) {
+    if (!o.active) continue;
+    o.cd -= dt; o.life += dt; if (o.flash > 0) o.flash -= dt; o.lean = 0;
+    const dx = me.x - o.x, dz = me.z - o.z, d = Math.hypot(dx, dz);
+    if (o.down > 0) { o.crouch = 0; o.down -= dt; if (o.down <= 0) { o.state = o.defeated ? 'flee' : (o.armed ? 'move' : 'rush'); o.t = 0; if (o.armed && !o.defeated) cbPickCover(o, me.x, me.z); } continue; }
+    if (o.stag > 0) { o.stag -= dt; o.x += o.nx * 2 * dt; o.z += o.nz * 2 * dt; o.lean = 0.35; continue; }
+    if (o.state === 'flee') { o.crouch = 0; o.t += dt; cbMove(o, o.x - dx, o.z - dz, 4.8, dt); if (o.t > 9 || d > 45) o.active = false; continue; }
+    if (!ok) { o.crouch = 0; o.a = cbTurn(o.a, cbYawTo(o.x, o.z, me.x, me.z), 5 * dt); continue; }
+    if (o.state === 'idle') { if (d < 45) { o.state = o.armed ? 'move' : 'rush'; if (o.armed) cbPickCover(o, me.x, me.z); } continue; }
+    if (o.armed && d < 5.5 && !G.inCar && o.state !== 'aim') o.state = 'rush';
+    if (o.state === 'move') {
+      o.crouch = Math.max(0, o.crouch - dt * 4);
+      const c = CB.covers[o.cover]; if (!c) { o.state = 'cover'; o.t = 0.8; continue; }
+      const cp = cbCoverPos(c, me.x, me.z), L = cbMove(o, cp.x, cp.z, 4.2, dt);
+      if (L < 0.35 || o.t > 6) { o.state = 'cover'; o.t = 0.8 + Math.random() * 1.2; } else o.t += dt;
+    } else if (o.state === 'cover') {
+      o.crouch = Math.min(1, o.crouch + dt * 5); o.a = cbTurn(o.a, cbYawTo(o.x, o.z, me.x, me.z), 8 * dt); o.t -= dt;
+      const c = CB.covers[o.cover]; if (c) { const cp = cbCoverPos(c, me.x, me.z); cbMove(o, cp.x, cp.z, 2.5, dt); o.a = cbTurn(o.a, cbYawTo(o.x, o.z, me.x, me.z), 1); }
+      if (o.t <= 0) {
+        if (o.peeks >= 2 || d > 22) { o.peeks = 0; cbPickCover(o, me.x, me.z); o.state = 'move'; o.t = 0; }
+        else if (lineOfSight(o.x, o.z, me.x, me.z) && d < 35) { o.state = 'aim'; o.aimT = 0.65; }
+        else o.t = 0.6;
+      }
+    } else if (o.state === 'aim') {
+      o.crouch = Math.max(0, o.crouch - dt * 6); o.a = cbTurn(o.a, cbYawTo(o.x, o.z, me.x, me.z), 14 * dt); o.aimT -= dt; cbAimLine(o);
+      if (o.aimT <= 0) { cbEnemyShot(o, 5, 0.45); o.peeks++; o.state = 'cover'; o.t = 1.2 + Math.random() * 1.3; }
+    } else if (o.state === 'rush') {
+      o.crouch = 0;
+      if (o.armed && d > 9) { cbPickCover(o, me.x, me.z); o.state = 'move'; o.t = 0; continue; }
+      if (o.atk > 0) { o.atk -= dt; o.lean = -0.3; if (o.atk <= 0) { if (d < 1.6 && !G.inCar) { cbHurtPlayer(5, 'pelea'); cbSfx('hit', o.x, o.z); } o.cd = 0.9 + Math.random() * 0.5; } }
+      else { cbMove(o, me.x, me.z, 4.0, dt, G.inCar ? 4 : 1.05); if (d < 1.2 && o.cd <= 0 && !G.inCar) o.atk = 0.42; }
+    }
+  }
+}
+function cbRamming() {   // player's vehicle knocks thugs / officers over (pedestrians are already handled by 30_agents)
+  if (!G.inCar) return; const car = G.car; if (car.speed < 4) return;
+  const fx = Math.cos(car.a), fz = -Math.sin(car.a), half = car.t.L / 2, R = car.t.Wd / 2 + 0.45;
+  for (const o of CB.actors) {
+    if (!o.active || o.down > 0) continue;
+    const dx = o.x - car.x, dz = o.z - car.z, along = dx * fx + dz * fz, lat = -dx * fz + dz * fx;
+    if (Math.abs(along) < half + 0.3 && Math.abs(lat) < R) { cbHit(o, 9, car.x, car.z, 'car'); o.x += (lat >= 0 ? -fz : fz) * 1.2; o.z += (lat >= 0 ? fx : -fx) * 1.2; car.impact = Math.max(car.impact || 0, 2); }
+  }
+}
+function cbDrawActors(mesh, list) {
+  let any = false;
+  for (let i = 0; i < list.length; i++) {
+    const o = list[i];
+    if (!o.active) { mesh.setMatrixAt(i, CB_HIDE); continue; }
+    any = true;
+    let fall = 0; if (o.down > 0) { const e = o.downMax - o.down; fall = e < 0.25 ? e / 0.25 : Math.min(1, o.down); }
+    _cbQ.setFromAxisAngle(CB_Y, o.a); _cbQ2.setFromAxisAngle(CB_Z, fall * 1.5 + o.lean); _cbQ.multiply(_cbQ2);
+    _cbV.set(o.x, o.y + (o.down > 0 ? 0 : Math.abs(Math.sin(o.phase)) * 0.05), o.z); _cbS.set(1, 1 - 0.32 * o.crouch, 1); _cbM.compose(_cbV, _cbQ, _cbS); mesh.setMatrixAt(i, _cbM);
+    const f = o.flash > 0 ? 1 + 1.4 * cbFxK() : 1; mesh.setColorAt(i, _cbC.setRGB(f, f, f));
+  }
+  if (any || mesh.visible) { mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true; }
+  mesh.visible = any;
+}
+
+// ---------------------------------------------------------------- mission: "Los del Callejón" (fictional gang)
+function cbFindSite() {
+  const okE = e => (CLASS_SPEED[e.cls] || 0) > 0 && e.cls !== 'service';
+  let best = null, bs = -1;
+  const scan = re => {
+    for (const b of W.buildings) {
+      if (!re.test(b.k || '')) continue;
+      const area = (b.bb[2] - b.bb[0]) * (b.bb[3] - b.bb[1]); if (area < 400) continue;
+      const c = b.c || centroid(b.P), ne = nearestEdge(c.x, c.z, 160, okE); if (!ne) continue;
+      const sc = Math.hypot(c.x, c.z) + Math.min(area, 20000) * 0.002;
+      if (sc > bs) { bs = sc; best = { b, c, ne }; }
+    }
+  };
+  scan(/^(industrial|warehouse|shed)$/);
+  if (!best) scan(/^(roof|yes)$/);
+  if (!best) return null;
+  const { b, c, ne } = best;
+  // walk from the road toward the building to find its wall, then put the yard between wall and road
+  let bx = ne.x, bz = ne.z; const L = Math.hypot(c.x - ne.x, c.z - ne.z) || 1, ux = (c.x - ne.x) / L, uz = (c.z - ne.z) / L;
+  for (let s = 0; s < L; s += 1) { const x = ne.x + ux * s, z = ne.z + uz * s; if (pointInPoly(x, z, b.P)) { bx = x; bz = z; break; } }
+  const gap = Math.hypot(bx - ne.x, bz - ne.z), off = clamp(gap * 0.55, 4, 12);
+  const site = { x: bx - ux * off, z: bz - uz * off, b, road: ne };
+  const [st, cross] = streetLabel(site.x, site.z, 1, 0);
+  const dir = Math.abs(site.x) > Math.abs(site.z) ? (site.x > 0 ? 'del oriente' : 'del occidente') : (site.z < 0 ? 'del norte' : 'del sur');
+  site.name = `las bodegas ${dir}` + (st ? ` (${st}${cross ? ' con ' + cross : ''})` : '');
+  return site;
+}
+function cbBuildCrates(site) {
+  const okE = e => (CLASS_SPEED[e.cls] || 0) > 0;
+  const spots = [];
+  for (let k = 0; k < 220 && spots.length < 7; k++) {
+    const a = Math.random() * TAU, r = 3 + Math.random() * 16, x = site.x + Math.cos(a) * r, z = site.z + Math.sin(a) * r;
+    if (collideCircle(x, z, 1.4)) continue;
+    const ne = nearestEdge(x, z, 30, okE); if (ne && ne.d < ne.e.w / 2 + 1.2) continue;
+    if (spots.some(s => Math.hypot(s.x - x, s.z - z) < 3.6)) continue;
+    spots.push({ x, z, a: Math.random() * Math.PI, by: null });
+  }
+  const gb = new GB(), wood = col('#8a6a45'), dark = col('#5e4630');
+  gb.box(0, 0.55, 0, 1.2, 1.1, 1.2, wood); gb.box(0, 1.11, 0, 1.24, 0.04, 0.3, dark); gb.box(0.61, 0.55, 0, 0.03, 0.3, 1.24, dark); gb.box(-0.61, 0.55, 0, 0.03, 0.3, 1.24, dark);
+  const m = new THREE.InstancedMesh(gb.build(), MAT_V, Math.max(1, spots.length)); m.castShadow = QL.shadow > 0; m.receiveShadow = true;
+  spots.forEach((s, i) => {
+    const y = groundAt(s.x, s.z);
+    _cbQ.setFromAxisAngle(CB_Y, s.a); _cbV.set(s.x, y, s.z); _cbS.set(1, 1, 1); _cbM.compose(_cbV, _cbQ, _cbS); m.setMatrixAt(i, _cbM);
+    const ca = Math.cos(s.a), sa = Math.sin(s.a), P = [[-0.6, -0.6], [0.6, -0.6], [0.6, 0.6], [-0.6, 0.6]].map(([u, v]) => ({ x: s.x + u * ca + v * sa, z: s.z - u * sa + v * ca }));
+    const o = { P, h: 1.1, k: 'crate', id: 'cb-crate', bb: bboxOf(P), c: { x: s.x, z: s.z } }; bGrid.insertBox(o, ...o.bb);
+  });
+  m.count = spots.length; m.visible = false; m.matrixAutoUpdate = false; m.updateMatrix(); scene.add(m);
+  CB.mesh.crates = m; CB.covers = spots;
+}
+function cbStartFight() {
+  if (!CB.site || CB.fight === 1) return;
+  CB.fight = 1; const me = cbMe();
+  const n = Math.min(CB_NTHUG, 4 + (Math.random() < 0.5 ? 1 : 0) + (QL.peds >= 1 ? 1 : 0)), armedN = cbNoGuns() ? 0 : Math.ceil(n * 0.6);
+  // spawn on the far side of the yard, away from the player
+  const ax = CB.site.x - me.x, az = CB.site.z - me.z, al = Math.hypot(ax, az) || 1;
+  for (let i = 0; i < n; i++) {
+    const o = CB.thugs[i]; let x = CB.site.x, z = CB.site.z;
+    for (let k = 0; k < 30; k++) {
+      const a = Math.atan2(az, ax) + (Math.random() - 0.5) * 2.2, r = 4 + Math.random() * 12;
+      x = CB.site.x + Math.cos(a) * r; z = CB.site.z + Math.sin(a) * r;
+      if (!collideCircle(x, z, 0.5) && Math.hypot(x - me.x, z - me.z) > 14) break;
+    }
+    Object.assign(o, { active: true, x, z, y: groundAt(x, z), a: cbYawTo(x, z, me.x, me.z), hp: 3.2, down: 0, stag: 0, state: 'idle', t: 0, cd: Math.random(), atk: 0, aimT: 0, armed: i < armedN, crouch: 0, lean: 0, cover: -1, peeks: 0, defeated: false, life: 0, flash: 0 });
+  }
+  for (const c of CB.covers) c.by = null;
+  talk('Los del Callejón', CB_TAUNTS[0]);
+  helpText(IS_TOUCH ? 'Usa <kbd>Golpe</kbd>' + (armedN ? ' o <kbd>Disparar</kbd>' : '') + '. Escóndete detrás de las estibas.' : 'Golpe: <kbd>X</kbd> o clic' + (cbGunReady() ? ' · Apuntar: clic derecho / <kbd>Z</kbd>' : '') + ' · Escóndete detrás de las estibas.', 7);
+}
+function cbEndFight() {
+  CB.fight = 0;
+  for (const o of CB.thugs) if (o.active) { if (Math.hypot(o.x - cbMe().x, o.z - cbMe().z) > 40) o.active = false; else { o.state = 'flee'; o.t = 0; o.defeated = true; } }
+  for (const c of CB.covers) c.by = null;
+}
+function cbMission(dt) {
+  const d = CB.def; if (!d) return;
+  if (MISSIONS.active !== d) { if (CB.fight) cbEndFight(); return; }
+  const me = cbMe();
+  if (MISSIONS.stage === 1) {
+    if (CB.fight !== 1) cbStartFight();
+    const left = CB.thugs.filter(o => o.active && !o.defeated).length;
+    if (left === 0) {
+      CB.fight = 2;
+      talk('Ferney', '¡Eso, parcero! Ya se abrieron. Ahora piérdase, que alguien llamó a la Patrulla Urbana.');
+      PURSUIT.addHeat(Math.max(0.2, 3.6 - PURSUIT.heat), CB.site.x, CB.site.z, 'Reportaron una pelea en las bodegas.');
+      MISSIONS.stage = 2; enterStage(); helpText('Aléjate y rompe la línea de vista de las patrullas hasta que dejen de buscarte.', 6);
+    } else if (Math.hypot(me.x - CB.site.x, me.z - CB.site.z) > 150) failMission('Te fuiste y Los del Callejón se quedaron con las bodegas.');
+  } else if (MISSIONS.stage === 2 && PURSUIT.level === 0 && PLAYER.state === 'ok') {
+    talk('Ferney', 'Usted es un berraco. Tome lo suyo, y no le cuente a nadie.');
+    completeMission();
+  }
+}
+function cbInitMission() {
+  const site = cbFindSite(); if (!site) { console.warn('combat: no site for Los del Callejón'); return; }
+  CB.site = site; cbBuildCrates(site);
+  const cx = findCrossing('Calle 31', 'Carrera 27') || findCrossing('Calle 29', 'Carrera 26') || PLACES.parque;
+  const at = cx && (findCrossing('Calle 31', 'Carrera 27') ? curbPoint(cx.x, cx.z, 'Calle 31') : curbPoint(cx.x + 30, cx.z));
+  const to = curbPoint(site.x, site.z);
+  CB.def = {
+    id: 'callejon', title: 'Los del Callejón', giver: 'Ferney', at, reward: 60000, needs: 'yesid', combat: true,
+    blurb: `Una pandilla de barrio inventada, “Los del Callejón”, se metió en ${site.name} y no deja trabajar a Ferney. Sácalos y luego piérdete de la Patrulla Urbana.`,
+    stages: [
+      { text: `Ve a ${site.name}.`, to, radius: 40, onArrive: () => cbStartFight() },
+      { get text() { const n = CB.thugs.filter(o => o.active && !o.defeated).length; return `Saca a Los del Callejón de las bodegas · quedan ${n}`; } },
+      { text: 'Pierde a la Patrulla Urbana: aléjate y escóndete de las patrullas.' },
+    ],
+  };
+  MISSIONS.defs.push(CB.def);
+  if (at) { const m = makeMarker('#f4c430'); m.position.set(at.x, 0, at.z); CB.def.marker = m; }
+  try { if (typeof PHONE_LINES === 'object' && PHONE_LINES) PHONE_LINES['Ferney'] = ['Parcero, unos manes que se hacen llamar Los del Callejón se metieron a las bodegas y no me dejan sacar la mercancía. ¿Me ayuda? Le marco el sitio.', 'Desde que usted los sacó, todo tranquilo por las bodegas.']; } catch (e) { }
+}
+
+// ---------------------------------------------------------------- armería (inside the taller, and on foot at the taller marker)
+function cbArmoryHtml() {
+  const inv = cbInv();
+  if (cbNoGuns()) return `<div class="item"><div><b>Armería</b><span>Desactivada: tienes el modo “sin armas” en Ajustes (solo puños).</span></div></div>`;
+  if (!cbUnlocked()) return `<div class="item"><div><b>Armería · bloqueada</b><span>Don Efra solo le vende a gente de confianza: cumple 2 encargos.</span></div></div>`;
+  return `<div class="item"><div><b>Pistola “Chispa” (ficticia, arcade)</b><span>Solo para encargos · ${inv.pistol ? 'ya es tuya' : 'trae ' + CB_AMMO_BOX + ' balas'} · disparar alerta a la Patrulla Urbana</span></div><button class="btn${inv.pistol ? '' : ' primary'}" id="cbBuyP" type="button" ${inv.pistol ? 'disabled' : ''}>${inv.pistol ? 'Comprada' : fmtMoney(CB_PRICE.pistol)}</button></div>
+    <div class="item"><div><b>Munición · caja de ${CB_AMMO_BOX}</b><span>Llevas ${inv.ammo}/${CB_MAXAMMO}</span></div><button class="btn" id="cbBuyA" type="button" ${!inv.pistol || inv.ammo >= CB_MAXAMMO ? 'disabled' : ''}>${fmtMoney(CB_PRICE.ammo)}</button></div>`;
+}
+function cbBindArmory(refresh) {
+  const pay = v => { if (SAVE.money < v) { feed('No alcanza la plata', ''); return false; } SAVE.money -= v; AUDIO.cash(); persist(); return true; };
+  const inv = cbInv();
+  if ($('cbBuyP')) $('cbBuyP').onclick = () => { if (!inv.pistol && pay(CB_PRICE.pistol)) { inv.pistol = true; inv.ammo = Math.max(inv.ammo, CB_AMMO_BOX); CB.weapon = inv.weapon = 'pistola'; persist(); feed('Pistola “Chispa”', IS_TOUCH ? 'Botón Disparar · Arma cambia a puños.' : 'Clic derecho o Z apunta · clic izquierdo dispara · 1/2 cambia de arma.'); refresh(); } };
+  if ($('cbBuyA')) $('cbBuyA').onclick = () => { if (inv.pistol && inv.ammo < CB_MAXAMMO && pay(CB_PRICE.ammo)) { inv.ammo = Math.min(CB_MAXAMMO, inv.ammo + CB_AMMO_BOX); persist(); refresh(); } };
+}
+function cbArmoryMenu() {
+  card(`<h1>Armería del taller<span>${fmtMoney(SAVE.money)}</span></h1>
+  <p>“Esto es solo pa’ los encargos, ¿oyó? Nada de andar echando tiros por el centro.” (personaje y armas ficticios)</p>
+  <div class="shop"><div class="item"><div><b>Chaleco de resistencia</b><span>Resistencia ${Math.round(PLAYER.armor)}% · absorbe los golpes antes que la salud (ficticio)</span></div><button class="btn" id="cbArm" type="button" ${PLAYER.armor >= 100 ? 'disabled' : ''}>${PLAYER.armor >= 100 ? 'Lleno' : '$8.000'}</button></div>${cbArmoryHtml()}</div>
+  <div class="row"><button class="btn primary" id="cbOut" type="button">Salir</button></div>`);
+  $('cbArm').onclick = () => { if (PLAYER.armor < 100) { if (SAVE.money < 8000) { feed('No alcanza la plata', ''); return; } SAVE.money -= 8000; AUDIO.cash(); persist(); PLAYER.addArmor(100); cbArmoryMenu(); } };
+  cbBindArmory(cbArmoryMenu); $('cbOut').onclick = closeMenu;
+}
+
+// ---------------------------------------------------------------- settings (pause → Ajustes) and controls help
+function cbSettingsHtml() {
+  return `<h2>Combate y accesibilidad</h2><div class="grid2">
+    <label for="cbAs">Asistencia de puntería</label><select id="cbAs"><option value="1">Activada</option><option value="0">Desactivada</option></select>
+    <label for="cbFx">Intensidad de destellos</label><input type="range" id="cbFx" min="0" max="1" step="0.1">
+    <label for="cbDm">Daño recibido</label><select id="cbDm"><option value="0.5">Bajo</option><option value="1">Normal</option></select>
+    <label for="cbNg">Modo sin armas</label><select id="cbNg"><option value="0">No: pistola ficticia en encargos</option><option value="1">Sí: solo puños</option></select>
+  </div><p class="small">Arcade y sin sangre: los golpes se ven como destellos y polvo, y la gente que cae se levanta. Estos ajustes se guardan al momento.</p>`;
+}
+function cbBindSettings() {
+  const s = SAVE.settings; if (!$('cbAs')) return;
+  $('cbAs').value = cbAssist() ? '1' : '0'; $('cbFx').value = cbFxK(); $('cbDm').value = String(cbDmgK() < 1 ? 0.5 : 1); $('cbNg').value = cbNoGuns() ? '1' : '0';
+  const save = () => { s.aimAssist = $('cbAs').value === '1'; s.fxIntensity = +$('cbFx').value; s.dmgTaken = +$('cbDm').value; s.noGuns = $('cbNg').value === '1'; if (s.noGuns) CB.weapon = 'punos'; cbApplyFx(); persist(); };
+  ['cbAs', 'cbFx', 'cbDm', 'cbNg'].forEach(id => { $(id).onchange = save; $(id).oninput = save; });
+}
+function cbKeysHtml() {
+  return IS_TOUCH ? `<kbd>Golpe</kbd><span>Puños y patada (a pie)</span><kbd>Disparar · Arma</kbd><span>Pistola ficticia de los encargos · cambiar a puños</span>`
+    : `<kbd>X · clic izq.</kbd><span>Golpe (combo puño, puño, patada)</span><kbd>Clic der. · Z</kbd><span>Apuntar con la pistola ficticia (clic izq. o X dispara)</span><kbd>1 · 2</kbd><span>Puños · pistola</span>`;
+}
+function cbPatchUi() {   // runtime wrappers so 50_ui.js needs no edit (see docs/combat_notes.md for the clean patch)
+  try {
+    if (typeof settingsHtml === 'function' && !settingsHtml._cb) {
+      const base = settingsHtml; settingsHtml = function () { const h = base(); const i = h.indexOf('</div>'); return i < 0 ? h + cbSettingsHtml() : h.slice(0, i + 6) + cbSettingsHtml() + h.slice(i + 6); }; settingsHtml._cb = true;
+    }
+    if (typeof bindSettings === 'function' && !bindSettings._cb) { const base = bindSettings; bindSettings = function (after) { base(after); cbBindSettings(); }; bindSettings._cb = true; }
+    if (typeof keysHelp === 'function' && !keysHelp._cb) { const base = keysHelp; keysHelp = function () { const h = base(); const i = h.lastIndexOf('</div>'); return i < 0 ? h : h.slice(0, i) + cbKeysHtml() + h.slice(i); }; keysHelp._cb = true; }
+    if (typeof openTaller === 'function' && !openTaller._cb) {
+      const base = openTaller;
+      openTaller = function () { base(); const shop = document.querySelector('#menuCard .shop'); if (shop) { shop.insertAdjacentHTML('beforeend', cbArmoryHtml()); cbBindArmory(() => openTaller()); } };
+      openTaller._cb = true;
+    }
+  } catch (e) { console.error('combat ui patch', e); }
+}
+
+// ---------------------------------------------------------------- input (own listeners; existing keys untouched)
+function cbInitInput() {
+  const isForm = el => el && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName);
+  addEventListener('keydown', e => {
+    if (e.repeat || isForm(e.target)) return;
+    const k = e.key.toLowerCase(); if (!cbCanInput()) return;
+    if (k === 'x') { if (CB.aiming && cbGunReady()) CB.q.fire++; else CB.q.melee++; }
+    else if (k === 'z') CB.keyAim = true;
+    else if (k === '1') cbSetWeapon('punos');
+    else if (k === '2') cbSetWeapon('pistola');
+  }, true);
+  addEventListener('keyup', e => { if (e.key.toLowerCase() === 'z') CB.keyAim = false; }, true);
+  addEventListener('blur', () => { CB.keyAim = CB.mouseAim = CB.mouseFire = CB.touchAim = CB.touchFire = false; });
+  addEventListener('touchstart', () => { CB.lastTouch = performance.now(); }, { passive: true, capture: true });
+  const view = $('view');
+  if (view) {
+    view.addEventListener('contextmenu', e => e.preventDefault());
+    view.addEventListener('mousedown', e => {
+      if (performance.now() - CB.lastTouch < 900 || !cbCanInput()) return;   // ignore mouse events emulated from touch taps
+      if (e.button === 2) { CB.mouseAim = true; e.preventDefault(); }
+      else if (e.button === 0) {
+        if (CB.aiming && cbGunReady()) { CB.mouseFire = true; CB.q.fire++; }
+        else { const w = G.walker; CB.lmb = { t: performance.now(), x: e.clientX, y: e.clientY, used: false }; if (cbPickTarget(w.x, w.z, w.a, 2.8, 1.3)) { CB.q.melee++; CB.lmb.used = true; } }
+      }
+    });
+  }
+  addEventListener('mouseup', e => {
+    if (e.button === 2) CB.mouseAim = false;
+    if (e.button === 0) {
+      CB.mouseFire = false; const l = CB.lmb; CB.lmb = null;
+      if (l && !l.used && cbCanInput() && performance.now() - l.t < 280 && Math.hypot(e.clientX - l.x, e.clientY - l.y) < 6) CB.q.melee++;   // a click (not a camera drag) punches
+    }
+  });
+  // touch buttons injected into #touch
+  const tz = $('touch');
+  if (tz) {
+    tz.insertAdjacentHTML('beforeend', '<div class="tbtn" id="tPunch" hidden>Golpe</div><div class="tbtn" id="tShoot" hidden>Disparar</div><div class="tbtn" id="tWeap" hidden>Arma</div>');
+    const tp = $('tPunch'), ts = $('tShoot'), tw = $('tWeap');
+    tp.addEventListener('pointerdown', e => { e.preventDefault(); if (cbCanInput()) CB.q.melee++; tp.classList.add('on'); setTimeout(() => tp.classList.remove('on'), 120); });
+    ts.addEventListener('pointerdown', e => { e.preventDefault(); try { ts.setPointerCapture(e.pointerId); } catch (er) { } if (cbCanInput()) { CB.touchAim = CB.touchFire = true; ts.classList.add('on'); } });
+    const up = () => { CB.touchAim = CB.touchFire = false; ts.classList.remove('on'); };
+    ts.addEventListener('pointerup', up); ts.addEventListener('pointercancel', up);
+    tw.addEventListener('pointerdown', e => { e.preventDefault(); if (cbCanInput()) cbSetWeapon(CB.weapon === 'pistola' ? 'punos' : 'pistola'); });
+  }
+  // HUD: weapon / ammo and crosshair
+  const st = document.createElement('style');
+  st.textContent = `#cbHud{right:calc(12px + var(--sa-r,0px));top:calc(150px + var(--sa-t,0px));padding:6px 10px;background:rgba(10,12,12,.6);border-radius:6px;font:700 14px/1.2 var(--f-cond,sans-serif);color:#f2ecd6;letter-spacing:.05em;text-transform:uppercase}
+#cbHud span{margin-left:8px;color:#f4c430}
+#cbX{left:50%;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;border:2px solid rgba(255,255,255,.85);border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.45)}
+#cbX::after{content:"";position:absolute;left:50%;top:50%;width:4px;height:4px;margin:-2px 0 0 -2px;background:#fff;border-radius:50%}
+#cbX.lock{border-color:#e5483b}
+#tPunch{right:200px;bottom:calc(70px + var(--sa-b,0px));width:64px;height:64px;font-size:12px}
+#tShoot{right:104px;bottom:calc(232px + var(--sa-b,0px));width:62px;height:62px;font-size:11px;border-color:rgba(229,72,59,.85)}
+#tWeap{right:180px;bottom:calc(214px + var(--sa-b,0px));width:46px;height:46px;font-size:10px}
+body.touch #cbHud{top:calc(370px + var(--sa-t,0px))}`;
+  document.head.appendChild(st);
+  document.body.insertAdjacentHTML('beforeend', '<div class="hud" id="cbHud" hidden><b id="cbW">Puños</b><span id="cbA"></span></div><div class="hud" id="cbX" hidden></div>');
+}
+function cbPollPad() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : []; let aim = false, fire = false;
+  for (const gp of pads) {
+    if (!gp) continue;
+    const edge = (key, p) => { const r = p && !CB.pad[key]; CB.pad[key] = p; return r; };
+    const lt = (gp.buttons[6]?.value || 0) > 0.4, rt = (gp.buttons[7]?.value || 0) > 0.5;
+    if (lt) aim = true; if (rt) fire = true;
+    if (edge(gp.index + ':2', !!gp.buttons[2]?.pressed) && cbCanInput()) { if (CB.aiming && cbGunReady()) CB.q.fire++; else CB.q.melee++; }
+    if (edge(gp.index + ':rt', rt) && cbCanInput()) CB.q.fire++;
+    if (edge(gp.index + ':13', !!gp.buttons[13]?.pressed) && cbCanInput()) cbSetWeapon(CB.weapon === 'pistola' ? 'punos' : 'pistola');
+  }
+  CB.padAim = aim && cbGunReady(); CB.padFire = fire && cbGunReady();
+}
+function cbUi() {
+  const onFoot = G.started && !G.inCar && PLAYER.state === 'ok', inv = cbInv(), guns = !cbNoGuns() && inv.pistol;
+  const key = [onFoot, guns, CB.weapon, inv.ammo, CB.aimK > 0.5, !!CB.lock, MENU.open].join('|');
+  if (key === CB.uiKey) return; CB.uiKey = key;
+  const hud = $('cbHud'); if (hud) { hud.hidden = !(onFoot && guns); $('cbW').textContent = CB.weapon === 'pistola' ? 'Pistola' : 'Puños'; $('cbA').textContent = CB.weapon === 'pistola' ? inv.ammo + ' balas' : ''; }
+  const x = $('cbX'); if (x) { x.hidden = !(onFoot && CB.aimK > 0.5 && cbGunReady()); x.classList.toggle('lock', !!CB.lock); }
+  const tp = $('tPunch'), ts = $('tShoot'), tw = $('tWeap');
+  if (tp) { tp.hidden = !onFoot; ts.hidden = !(onFoot && cbGunReady()); tw.hidden = !(onFoot && guns); }
+}
+
+// ---------------------------------------------------------------- over-the-shoulder aim camera (applied right before rendering)
+function cbCamAdjust() {
+  if (CB.aimK < 0.01 || G.inCar || !G.walker || !G.started) return;
+  const w = G.walker, k = CB.aimK, yaw = CB.aimYaw, fx = Math.cos(yaw), fz = -Math.sin(yaw), rx = -fz, rz = fx;
+  let back = 2.3, side = 0.72;
+  for (const s of [1, 0.6, 0.3]) { back = 2.3 * s; side = 0.72 * Math.max(0.5, s); if (!collideCircle(w.x - fx * back + rx * side, w.z - fz * back + rz * side, 0.25)) break; }
+  camera.position.set(lerp(CAM.pos.x, w.x - fx * back + rx * side, k), lerp(CAM.pos.y, w.y + 1.7, k), lerp(CAM.pos.z, w.z - fz * back + rz * side, k));
+  _cbLook.set(lerp(CAM.look.x, w.x + fx * 18 + rx * side * 0.4, k), lerp(CAM.look.y, w.y + 1.45, k), lerp(CAM.look.z, w.z + fz * 18 + rz * side * 0.4, k));
+  camera.lookAt(_cbLook);
+}
+function cbEnsureRender() {
+  if (!CB.render) CB.render = (r, s, c) => {
+    if (CB.inR) { r.render(s, c); return; }
+    CB.inR = true;
+    try { try { cbCamAdjust(); } catch (e) { } (CB.baseRender || ((r2, s2, c2) => r2.render(s2, c2)))(r, s, c); } finally { CB.inR = false; }
+  };
+  if (HOOKS.render !== CB.render) { CB.baseRender = HOOKS.render || null; HOOKS.render = CB.render; }
+}
+
+// ---------------------------------------------------------------- hooks
+HOOKS.initCombat = () => {
+  const t0 = performance.now();
+  CB.weapon = cbInv().weapon === 'pistola' && cbInv().pistol && !cbNoGuns() ? 'pistola' : 'punos';
+  PEDS.list.forEach((p, i) => CB.pedIdx.set(p, i));
+  cbInitMeshes(); cbInitMission(); cbInitInput(); cbPatchUi(); cbEnsureRender(); cbApplyFx();
+  CB.ready = true;
+  HOOKS.combat = CB;   // debug handle
+  console.info('combat', Math.round(performance.now() - t0) + 'ms', CB.site ? CB.site.name + ' · ' + CB.covers.length + ' estibas' : 'sin sitio');
+};
+HOOKS.updateCombat = (dt, ctx) => {
+  if (!CB.ready) return;
+  cbEnsureRender(); cbApplyFx();
+  // after HERIDO / DETENIDO: reset fights so nobody keeps attacking a respawned player
+  const ok = PLAYER.state === 'ok';
+  if (!ok && CB.wasOk) { CB.atk = null; for (const s of CB.peds.values()) s.hostile = 0; }
+  if (ok && !CB.wasOk) { cbClearCops(); CB.prev = null; }
+  CB.wasOk = ok;
+  if (CB.talkCd > 0) CB.talkCd -= dt;
+  cbPollPad();
+  cbPlayer(dt);
+  cbPeds(dt);
+  cbCops(dt);
+  cbThugs(dt);
+  cbRamming();
+  // keep everyone from overlapping the walker
+  if (!G.inCar && G.walker) for (const o of CB.actors) if (o.active && o.down <= 0) { const dx = o.x - G.walker.x, dz = o.z - G.walker.z, d = Math.hypot(dx, dz); if (d < 0.7 && d > 0.001) { o.x += dx / d * (0.7 - d); o.z += dz / d * (0.7 - d); } }
+  cbDrawActors(CB.mesh.thug, CB.thugs); cbDrawActors(CB.mesh.cop, CB.cops);
+  cbMission(dt);
+  if (CB.mesh.crates && CB.site) CB.mesh.crates.visible = Math.hypot(ctx.px - CB.site.x, ctx.pz - CB.site.z) < 260;
+  cbFxUpdate(dt);
+  cbUi();
+  // armería on foot at the taller marker (the car-only taller menu gets the same section via the openTaller wrapper)
+  if (!G.inCar && G.walker && PLACES.taller && !promptShown && ok && Math.hypot(PLACES.taller.x - ctx.px, PLACES.taller.z - ctx.pz) < 6 && Math.hypot(G.car.x - ctx.px, G.car.z - ctx.pz) > 4) {
+    showPrompt(`<kbd>${IS_TOUCH ? 'Usar' : 'E'}</kbd> Armería y chaleco · Taller Don Efra`);
+    if (pressed.has('use')) { pressed.delete('use'); cbArmoryMenu(); }
+  }
+};
+
 // ===== 40_missions.js
 // Missions & activities. All characters, businesses and the patrol agency are fictional.
 // Places are real (OSM); facts in dialogue come from the research notes (dates of the cathedral, market, etc.).
@@ -5422,7 +6313,7 @@ function renderMapRaster() {
   for (const b of W.blocks) { path(b.P); for (const hh of b.H) { const P = hh; g.moveTo(X(P[0].x), Z(P[0].z)); P.forEach(p => g.lineTo(X(p.x), Z(p.z))); g.closePath(); } g.fillStyle = b.g ? MAPC.green : MAPC.block; g.fill('evenodd'); }
   for (const p of D.parks) { path(ptsOf(p.p)); g.fillStyle = p.k === 'pitch' ? MAPC.pitch : MAPC.park; g.fill(); }
   for (const b of W.buildings) { path(b.P); g.fillStyle = b.h > 9 ? MAPC.bldHi : MAPC.bld; g.fill(); }
-  for (const k of ['cathedral', 'camp', 'market', 'church', 'stadium']) for (const L of (W.landmarks[k] || [])) { path(L.P); g.fillStyle = MAPC.lm; g.fill(); }
+  for (const k of ['cathedral', 'camp', 'market', 'church', 'stadium', 'heritage']) for (const L of (W.landmarks[k] || [])) { path(L.P); g.fillStyle = MAPC.lm; g.fill(); }
   // one-way arrows (documented)
   g.fillStyle = MAPC.oneway;
   for (const e of W.edges) {
@@ -5826,6 +6717,7 @@ function creditsHtml() {
   <p class="small">Datos del mapa © colaboradores de OpenStreetMap, disponibles bajo la licencia ODbL 1.0 (openstreetmap.org/copyright). Extracto del ${D.meta.osm_timestamp.slice(0, 10)}.</p>
   <p class="small">Construcciones y número de pisos: Alcaldía de Palmira, Base de Datos Catastral 2024; semaforización: Alcaldía de Palmira 2020–2024 (datos.gov.co, CC BY-SA 4.0 según publicación; licencia pendiente de confirmación).</p>
   <p class="small">Huellas de edificios © Microsoft, Global ML Building Footprints (${D.meta.msft_release.split(',')[0].replace('Global ML Building Footprints ', '')}), licencia CDLA-Permissive-2.0.</p>
+  <p class="small">Referencias visuales de los lugares conocidos (Wikimedia Commons; solo como referencia, no se incluyen las fotos): Martinduquea (CC BY-SA 3.0), Yama2013 (CC BY 3.0), Diego Carrejo Murillo (CC BY-SA 3.0), Estebanjosem0621 (CC BY-SA 4.0), Antonio J. Vélez Q. (CC BY-SA 3.0), KevBra1984 (CC BY-SA 4.0), Alcaldía de Palmira (CC BY-SA 4.0), dominio público. Datos de Wikidata (CC0).</p>
   <p class="small">Proyección local Transversa de Mercator centrada en el Parque Bolívar · 1 unidad = 1 metro.</p>
   <h2>Qué tan fiel es</h2>
   <div class="fid">
