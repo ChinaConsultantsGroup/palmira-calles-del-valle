@@ -3547,8 +3547,9 @@ let LMLIB = null;   // shared helpers + landmark geometry for 16_interiors.js (s
         spots: { doors: doors.map(d => ({ out: d.out, in: d.in })), stalls: stalls.map(s => ({ id: s.id, kind: s.kind, owner: s.owner || null, vendor: s.vendor, front: s.front })), aurora: null },
       };
     }
-    function pile(gb, x, y, z, ux, uz, vx, vz, cl, r, nx = 3, ny = 2) {   // pyramid of fruit
-      for (let l = 0; l < 3; l++) { const ax = nx - l, ay = ny - l; if (ax < 1 || ay < 1) break; for (let i = 0; i < ax; i++) for (let j = 0; j < ay; j++) { const a = (i - (ax - 1) / 2) * r * 1.9, b = (j - (ay - 1) / 2) * r * 1.9; blob(gb, x + ux * a + vx * b, y + r + l * r * 1.55, z + uz * a + vz * b, r, 1, 0.92, 1, shade(cl, 0.9 + 0.2 * hash(i * 7 + j * 3 + l)), 0); } }
+    function pile(gb, x, y, z, ux, uz, vx, vz, cl, r, nx = 3, ny = 2) {   // pyramid of fruit: a mound of fruit colour topped with a few whole fruits
+      const R = r * Math.max(nx, ny) * 0.95; blob(gb, x, y + R * 0.35, z, R, 1, 0.55, 0.8, shade(cl, 0.85), 0);
+      for (let i = 0; i < (HI ? 4 : 2); i++) { const a = (i - 1.5) * r * 1.6; blob(gb, x + ux * a, y + R * 0.62 + r * (i % 2 ? 0.6 : 0.2), z + uz * a, r, 1, 0.92, 1, shade(cl, 0.95 + 0.1 * (i % 2)), 0); }
     }
     function buildStall(gb, gl, s, U) {
       const V = s.face, fr = new Frame(gb, s.c, U, V), k = s.kind, h = strHash(s.id);
@@ -3562,7 +3563,7 @@ let LMLIB = null;   // shared helpers + landmark geometry for 16_interiors.js (s
       const top = 1.0, W = (a, b) => fr.P(a, b), u = U, v = V;
       if (k === 'fruta') {
         const F = [['#e8a33a', 0.09], ['#f0a020', 0.07], ['#7a9a3a', 0.08], ['#d24b2a', 0.08], ['#f0c431', 0.085], ['#3f5f2a', 0.1]];
-        for (let i = 0; i < 3; i++) { const [c, r] = F[(h + i * 5) % F.length], p = W(-0.9 + i * 0.9, 0.2); pile(gb, p.x, top, p.z, u.x, u.z, v.x, v.z, col(c), r, 4, 3); }
+        for (let i = 0; i < 3; i++) { const [c, r] = F[(h + i * 5) % F.length], p = W(-0.9 + i * 0.9, 0.2); pile(gb, p.x, top, p.z, u.x, u.z, v.x, v.z, col(c), r * 1.25, HI ? 3 : 2, 2); }
         for (let i = 0; i < 3; i++) { const p = W(-0.9 + i * 0.9, -1.0); blob(gb, p.x, 1.85, p.z, 0.13, 1, 1.5, 1, col('#b8862e'), 0); const q = LB; cone(gb, p.x, 2.02, p.z, 0.22, 0.09, 5, col('#4f8a3a')); }   // piñas on the shelf
         for (let i = 0; i < 3; i++) { const p = W(-1.0 + i * 1.0, 0.75); tube(gb, [p.x, 2.2, p.z], [p.x, 1.75, p.z], 0.02, 0.02, 3, col('#6b5a45')); blob(gb, p.x, 1.6, p.z, 0.18, 1.1, 1.6, 1.1, col(i % 2 ? '#c9c43a' : '#8fae3a'), 0); }   // plátano bunches
       } else if (k === 'verdura' || k === 'granos') {
@@ -3582,7 +3583,7 @@ let LMLIB = null;   // shared helpers + landmark geometry for 16_interiors.js (s
         for (let i = 0; i < 4; i++) { const p = W(-1.0 + i * 0.66, 0.75); tube(gb, [p.x, 2.2, p.z], [p.x, 1.85, p.z], 0.015, 0.015, 3, col('#6b5a45')); blob(gb, p.x, 1.72, p.z, 0.14, 1, 1.5, 1, col('#5a9440'), 0); }
       } else if (k === 'cocina') {
         for (let i = 0; i < 4; i++) { const p = W(-1.05 + i * 0.7, 0.15); cyl(gb, p.x, top, p.z, 0.22, 0.2, 0.2, 10, col('#9aa0a6')); cyl(gb, p.x, top + 0.22, p.z, 0.04, 0.22, 0.22, 10, col('#7d8388')); }
-        for (let i = 0; i < 6; i++) { const p = W(-1.2 + i * 0.48, -1.0); for (let j = 0; j < 3; j++) cyl(gb, p.x, 1.6 + j * 0.09, p.z, 0.09, 0.12, 0.2, 8, col(SHIRTS[(i + j + h) % SHIRTS.length]), true); }
+        for (let i = 0; i < 5; i++) { const p = W(-1.2 + i * 0.6, -1.0); cyl(gb, p.x, 1.6, p.z, 0.27, 0.12, 0.2, 6, col(SHIRTS[(i + h) % SHIRTS.length]), true); }
         for (let i = 0; i < 4; i++) { const p = W(-1.0 + i * 0.66, 0.8); tube(gb, [p.x, 2.2, p.z], [p.x, 1.9, p.z], 0.01, 0.01, 3, col('#555')); cyl(gb, p.x, 1.62, p.z, 0.25, 0.14, 0.12, 8, col('#b9bec2')); }
       } else if (k === 'fritos') {
         const p = W(-0.6, 0.05); cyl(gb, p.x, top, p.z, 0.35, 0.33, 0.36, 12, col('#2a2b2c')); cyl(gb, p.x, top + 0.34, p.z, 0.02, 0.31, 0.31, 12, col('#d9902a'));
@@ -3592,14 +3593,15 @@ let LMLIB = null;   // shared helpers + landmark geometry for 16_interiors.js (s
       }
       gl && (() => { const b = fr.W(0, 2.15, 0.15); const g = new THREE.SphereGeometry(0.08, 6, 4); g.translate(b[0], b[1], b[2]); geo(gl, g, col('#ffd98a')); })();
       tube(gb, fr.W(0, 2.22, 0.15), fr.W(0, 7.6, 0.15), 0.008, 0.008, 3, col('#222'));
-      if ((h >> 5) % 4 !== 0 || s.owner) person(gb, s.vendor.x, s.vendor.z, V, { apron: true, shirt: SHIRTS[h % SHIRTS.length], skin: SKINS[(h >> 2) % SKINS.length], skirt: (h >> 7) % 2 || s.owner ? '#5b5f63' : null, hat: (h >> 9) % 5 === 0 ? 'aguadeno' : null });
+      if ((h >> 5) % 2 === 0 || s.owner) person(gb, s.vendor.x, s.vendor.z, V, { apron: true, shirt: SHIRTS[h % SHIRTS.length], skin: SKINS[(h >> 2) % SKINS.length], skirt: (h >> 7) % 2 || s.owner ? '#5b5f63' : null, hat: (h >> 9) % 5 === 0 ? 'aguadeno' : null });
       return mkSolid(rectPoly(fr, -1.5, -1.3, 1.5, 0.75), 1.2, 'int:stall');
     }
     function buildGaleria(I) {
       const gb = new GB(), gl = new GB(), gs = new GB(), { P, Pi, RF } = I, CREAM = col('#ebe2cd'), GRN = col('#3f7a55'), FLOOR = col('#9d998f');
       const Pw = insetConvex(P, 0.37);
       gb.walls(Pi, G0, G0 + 10.4, CREAM, false, true); gb.walls(Pw, G0, G0 + 1.5, GRN, false, true);
-      gb.cap(Pi, null, G0 + 0.03, FLOOR);
+      for (let i = 1; i < Pi.length - 1; i++) quadUp(gb, [Pi[0].x, G0 + 0.03, Pi[0].z], [Pi[i].x, G0 + 0.03, Pi[i].z], [Pi[i + 1].x, G0 + 0.03, Pi[i + 1].z], [Pi[i + 1].x, G0 + 0.03, Pi[i + 1].z], FLOOR);   // convex floor (fan)
+      for (let k = -8; k <= 8; k++) { const a = { x: RF.c.x + RF.V.x * k * 4, z: RF.c.z + RF.V.z * k * 4 }; ribbon(gb, [{ x: a.x - RF.U.x * RF.L / 2, z: a.z - RF.U.z * RF.L / 2 }, { x: a.x + RF.U.x * RF.L / 2, z: a.z + RF.U.z * RF.L / 2 }], 0.12, G0 + 0.04, col('#85827a')); }
       // perimeter locales with rolling shutters, door frames with daylight
       for (let i = 0; i < Pi.length; i++) {
         const a = Pi[i], b = Pi[(i + 1) % Pi.length], dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz), t = { x: dx / l, z: dz / l };
@@ -3616,8 +3618,8 @@ let LMLIB = null;   // shared helpers + landmark geometry for 16_interiors.js (s
       const fr = new Frame(gb, RF.c, RF.U, RF.V), nb = 4, bw = RF.Wd / nb, Lh = RF.L / 2 + 0.6, ye = 7.8, yr = 10.2, SUN = SUN_DIR;
       for (let b = 0; b < nb; b++) {
         const v0 = -RF.Wd / 2 + b * bw - 0.3, v1 = v0 + bw + 0.6, vm = (v0 + v1) / 2;
-        for (let u = -Lh, k = 0; u < Lh; u += 0.8, k++) {
-          const u1 = Math.min(Lh, u + 0.8), c = shade(col('#8c9092'), k % 2 ? 1.0 : 0.86);
+        for (let u = -Lh, k = 0; u < Lh; u += 1.6, k++) {
+          const u1 = Math.min(Lh, u + 1.6), c = shade(col('#8c9092'), k % 2 ? 1.0 : 0.86);
           quadDn(gb, fr.W(u, ye, v0), fr.W(u1, ye, v0), fr.W(u1, yr, vm), fr.W(u, yr, vm), c); quadDn(gb, fr.W(u, ye, v1), fr.W(u1, ye, v1), fr.W(u1, yr, vm), fr.W(u, yr, vm), c);
         }
         for (let u = -Lh + 3; u < Lh - 2; u += 6) for (const sg of [-1, 1]) {   // skylight panels near the ridge
