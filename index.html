@@ -2183,8 +2183,10 @@ function buildWorld() {
       }
     }
     const bol = (W.landmarks.park || [])[0];
+    const BOL_DETAILED = typeof DETAILED_LANDMARKS !== 'undefined' && DETAILED_LANDMARKS.has('park_bolivar');
     for (const pk of c.parks) {
       const P = pk.P, isBol = bol && pointInPoly(centroid(P).x, centroid(P).z, bol.P);
+      if (isBol && BOL_DETAILED) continue;   // modelled in detail by 15_landmarks.js
       let per = 0; for (let i = 0; i < P.length; i++) per += Math.hypot(P[(i + 1) % P.length].x - P[i].x, P[(i + 1) % P.length].z - P[i].z);
       const n = Math.min(L.low ? 6 : 12, Math.floor(per / 15)); if (n < 1) continue;
       let acc = 0, i = 0, placed = 0;
@@ -2277,6 +2279,7 @@ function buildWorld() {
     ST.BLD = new WeakSet(W.buildings); walkIndex();
     for (const k in W.landmarks) for (const l of W.landmarks[k]) if (k !== 'park') ST.lmPolys.push(l);
     const bol = (W.landmarks.park || [])[0]; ST.P0 = bol ? bol.c : { x: 0, z: 0 };
+    const BOL_DETAILED = typeof DETAILED_LANDMARKS !== 'undefined' && DETAILED_LANDMARKS.has('park_bolivar');
     // exclusion zones for parked vehicles: mission / NPC kerb spots (approximate, see 40_missions.js / 45_npcs.js) [APX]
     for (const l of LANDMARK_INFO) ST.excl.push({ x: l.x, z: l.z, r: 45 });
     for (const [dx, dz] of [[330, -280], [-260, -330], [30, -48], [0, 40], [50, 0]]) ST.excl.push({ x: ST.P0.x + dx, z: ST.P0.z + dz, r: 30 });
@@ -2306,7 +2309,8 @@ function buildWorld() {
     for (const b of W.buildings) chunkAt(b.c.x, b.c.z).bldgs.push(b);
     for (const p of D.parks) if (p.k !== 'pitch') { const P = ptsOf(p.p); if (Math.abs(signedArea(P)) > 250) { const c0 = centroid(P); chunkAt(c0.x, c0.z).parks.push({ P, n: p.n }); } }
     for (const [e, n] of D.trees) chunkAt(e / 10, -n / 10).trees.push({ x: e / 10, z: -n / 10 });
-    if (bol) {   // Parque Bolívar post-top lamps on the ring path [APX]
+    if (BOL_DETAILED && HOOKS.parkBolivarLamps) for (const l of HOOKS.parkBolivarLamps) addLight(l.x, l.y ?? KERB + 3.8, l.z, 'park');
+    else if (bol) {   // Parque Bolívar post-top lamps on the ring path [APX]
       const o = obb(bol.P);
       for (let k = 0; k < 8; k++) { const an = k / 8 * TAU, x = o.cx + Math.cos(an) * 14.2, z = o.cz + Math.sin(an) * 14.2; chunkAt(x, z).plamps.push({ x, z }); addLight(x, KERB + 3.8, z, 'park'); }
     }
@@ -2351,7 +2355,8 @@ function buildWorld() {
 //     (Q42838384 Antiguo Edificio de la Alcaldía, Q42838408 Catedral, Q42838437 Estación), es.wikipedia
 //     "Palmira (Colombia)" (dates, architects). Dimensions not given by footprints are ESTIMATED from photo
 //     proportions; every model says what is approximate.
-// Draw calls: one merged mesh per landmark (11 meshes, ~35k triangles). Stats are logged at boot (HOOKS.landmarkStats).
+// Draw calls: one merged mesh per landmark + Parque Bolívar + monument clusters (20 meshes, ~55k triangles with the city
+// data). LANDMARK_INFO entries and W.landmarks.heritage footprints are registered at module load (see "preload").
 
 const DETAILED_LANDMARKS = new Set(['cathedral', 'camp', 'church', 'market', 'stadium', 'park_bolivar']);
 const LM_SELF_APPLY = true;
@@ -4923,6 +4928,11 @@ function cbMove(o, tx, tz, sp, dt, stopAt = 0) {   // straight line + wall slide
   }
   o.y = groundAt(o.x, o.z); return L;
 }
+function cbBlocked(ax, az, bx, bz) {   // any solid (walls, fences, trees, crates) on the straight walk between two points
+  const L = Math.hypot(bx - ax, bz - az), n = Math.ceil(L / 1.2);
+  for (let i = 1; i < n; i++) { const t = i / n; if (collideCircle(ax + (bx - ax) * t, az + (bz - az) * t, 0.3)) return true; }
+  return false;
+}
 function cbMe() { return G.inCar ? G.car : G.walker; }
 function cbRayWall(x, z, fx, fz, R) {   // distance to the first solid (≥1.5 m tall) thing along a horizontal ray
   for (let d = 0.6; d < R; d += 0.7) {
@@ -5277,7 +5287,11 @@ function cbThugs(dt) {
       o.crouch = 0;
       if (o.armed && d > 9) { cbPickCover(o, me.x, me.z); o.state = 'move'; o.t = 0; continue; }
       if (o.atk > 0) { o.atk -= dt; o.lean = -0.3; if (o.atk <= 0) { if (d < 1.6 && !G.inCar) { cbHurtPlayer(5, 'pelea'); cbSfx('hit', o.x, o.z); } o.cd = 0.9 + Math.random() * 0.5; } }
-      else { cbMove(o, me.x, me.z, 4.0, dt, G.inCar ? 4 : 1.05); if (d < 1.2 && o.cd <= 0 && !G.inCar) o.atk = 0.42; }
+      else {
+        o.pathT = (o.pathT || 0) - dt; if (o.pathT <= 0) { o.pathT = 0.6; o.via = cbBlocked(o.x, o.z, me.x, me.z) && CB.site && !cbBlocked(o.x, o.z, CB.site.x, CB.site.z) && Math.hypot(o.x - CB.site.x, o.z - CB.site.z) > 2 ? CB.site : null; }
+        if (o.via) cbMove(o, o.via.x, o.via.z, 4.0, dt); else cbMove(o, me.x, me.z, 4.0, dt, G.inCar ? 4 : 1.05);
+        if (d < 1.2 && o.cd <= 0 && !G.inCar) o.atk = 0.42;
+      }
     }
   }
 }
@@ -5352,7 +5366,7 @@ function cbBuildCrates(site) {
   const spots = [];
   for (let k = 0; k < 220 && spots.length < 7; k++) {
     const a = Math.random() * TAU, r = 3 + Math.random() * 16, x = site.x + Math.cos(a) * r, z = site.z + Math.sin(a) * r;
-    if (collideCircle(x, z, 1.4)) continue;
+    if (collideCircle(x, z, 1.4) || cbBlocked(x, z, site.x, site.z)) continue;
     const ne = nearestEdge(x, z, 30, okE); if (ne && ne.d < ne.e.w / 2 + 1.2) continue;
     if (spots.some(s => Math.hypot(s.x - x, s.z - z) < 3.6)) continue;
     spots.push({ x, z, a: Math.random() * Math.PI, by: null });
@@ -5377,10 +5391,11 @@ function cbStartFight() {
   const ax = CB.site.x - me.x, az = CB.site.z - me.z, al = Math.hypot(ax, az) || 1;
   for (let i = 0; i < n; i++) {
     const o = CB.thugs[i]; let x = CB.site.x, z = CB.site.z;
-    for (let k = 0; k < 30; k++) {
-      const a = Math.atan2(az, ax) + (Math.random() - 0.5) * 2.2, r = 4 + Math.random() * 12;
-      x = CB.site.x + Math.cos(a) * r; z = CB.site.z + Math.sin(a) * r;
-      if (!collideCircle(x, z, 0.5) && Math.hypot(x - me.x, z - me.z) > 14) break;
+    for (let k = 0; k < 60; k++) {   // same open yard as the player (line of sight to the yard centre and, first, to the player)
+      const a = Math.atan2(az, ax) + (Math.random() - 0.5) * (k < 30 ? 2.2 : 4), r = 4 + Math.random() * 12;
+      const x2 = CB.site.x + Math.cos(a) * r, z2 = CB.site.z + Math.sin(a) * r;
+      if (collideCircle(x2, z2, 0.5) || Math.hypot(x2 - me.x, z2 - me.z) < 12 || !lineOfSight(x2, z2, CB.site.x, CB.site.z) || cbBlocked(x2, z2, CB.site.x, CB.site.z)) continue;
+      x = x2; z = z2; if (k >= 30 || (lineOfSight(x2, z2, me.x, me.z) && !cbBlocked(x2, z2, me.x, me.z))) break;
     }
     Object.assign(o, { active: true, x, z, y: groundAt(x, z), a: cbYawTo(x, z, me.x, me.z), hp: 3.2, down: 0, stag: 0, state: 'idle', t: 0, cd: Math.random(), atk: 0, aimT: 0, armed: i < armedN, crouch: 0, lean: 0, cover: -1, peeks: 0, defeated: false, life: 0, flash: 0 });
   }
@@ -7036,7 +7051,7 @@ function creditsHtml() {
   <p class="small">Datos del mapa © colaboradores de OpenStreetMap, disponibles bajo la licencia ODbL 1.0 (openstreetmap.org/copyright). Extracto del ${D.meta.osm_timestamp.slice(0, 10)}.</p>
   <p class="small">Construcciones y número de pisos: Alcaldía de Palmira, Base de Datos Catastral 2024; semaforización: Alcaldía de Palmira 2020–2024 (datos.gov.co, CC BY-SA 4.0 según publicación; licencia pendiente de confirmación).</p>
   <p class="small">Huellas de edificios © Microsoft, Global ML Building Footprints (${D.meta.msft_release.split(',')[0].replace('Global ML Building Footprints ', '')}), licencia CDLA-Permissive-2.0.</p>
-  <p class="small">Referencias visuales de los lugares conocidos (Wikimedia Commons; solo como referencia, no se incluyen las fotos): Martinduquea (CC BY-SA 3.0), Yama2013 (CC BY 3.0), Diego Carrejo Murillo (CC BY-SA 3.0), Estebanjosem0621 (CC BY-SA 4.0), Antonio J. Vélez Q. (CC BY-SA 3.0), KevBra1984 (CC BY-SA 4.0), Alcaldía de Palmira (CC BY-SA 4.0), dominio público. Datos de Wikidata (CC0).</p>
+  <p class="small">Referencias visuales de los lugares conocidos (Wikimedia Commons; solo como referencia, no se incluyen las fotos): Martinduquea (CC BY-SA 3.0), Yama2013 (CC BY 3.0), Diego Carrejo Murillo (CC BY-SA 3.0), Estebanjosem0621 (CC BY-SA 4.0), Antonio J. Vélez Q. (CC BY-SA 3.0), KevBra1984 (CC BY-SA 4.0), Grillobike (CC BY-SA 3.0), Alcaldía de Palmira (CC BY-SA 4.0), dominio público. Datos de Wikidata (CC0).</p>
   <p class="small">Proyección local Transversa de Mercator centrada en el Parque Bolívar · 1 unidad = 1 metro.</p>
   <h2>Qué tan fiel es</h2>
   <div class="fid">
