@@ -462,6 +462,19 @@ for e in els:
         elif t.get("name") and (t.get("amenity") or t.get("shop") or t.get("historic") or t.get("tourism")):
             pois.append({"n": t["name"], "t": t.get("amenity") or t.get("shop") or t.get("historic") or t.get("tourism"), "x": dm(x), "y": dm(y)})
 
+# extra OSM points fetched separately (traffic calming, mapped crossings, speed cameras)
+if (RAW / "osm_extra.json").exists():
+    for e in json.load(open(RAW / "osm_extra.json"))["elements"]:
+        t = e.get("tags", {}); c = e if "lat" in e else e.get("center")
+        if not c:
+            continue
+        x, y = P(c["lon"], c["lat"])
+        if not AREA.contains(Point(x, y)):
+            continue
+        k = "traffic_calming" if "traffic_calming" in t else t.get("highway")
+        if k in ("traffic_calming", "crossing", "speed_camera"):
+            pts_extra.setdefault(k, []).append([dm(x), dm(y)] + ([t["traffic_calming"]] if k == "traffic_calming" else []))
+
 # ---------------------------------------------------------------- places (barrio names), waterways, railways
 places, water, rail = [], [], []
 WATER_W = {"river": 14, "canal": 5, "stream": 4, "ditch": 1.6, "drain": 1.6}

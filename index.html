@@ -425,6 +425,7 @@ class Grid {
   constructor(cell) { this.cell = cell; this.map = new Map(); }
   key(ix, iz) { return ix * 73856093 ^ iz * 19349663; }
   insertBox(item, x0, z0, x1, z1) {
+    if (!Number.isFinite(x0 + z0 + x1 + z1) || x1 - x0 > 20000 || z1 - z0 > 20000) return;   // ignore broken/huge boxes
     const c = this.cell;
     for (let ix = Math.floor(x0 / c); ix <= Math.floor(x1 / c); ix++)
       for (let iz = Math.floor(z0 / c); iz <= Math.floor(z1 / c); iz++) {
@@ -1386,8 +1387,8 @@ function buildWorld() {
   };
   const lvl = () => {
     const low = IS_TOUCH || QL === Q.baja, high = !low && QL === Q.alta;
-    return { low, high, far: low ? 280 : high ? 650 : 450, mid: low ? 200 : high ? 420 : 300, near: low ? 150 : high ? 300 : 220, cars: low ? 12 : high ? 50 : 30, motos: low ? 20 : high ? 80 : 45,
-      seg: low ? 5 : 8, budget: low ? 2.5 : 4, shop: low ? 0.6 : 1, signs: low ? 90 : high ? 320 : 220 };
+    return { low, high, far: low ? 280 : high ? 650 : 450, mid: low ? 200 : high ? 420 : 300, near: low ? 150 : high ? 300 : 200, cars: low ? 12 : high ? 50 : 22, motos: low ? 20 : high ? 80 : 30,
+      seg: low ? 5 : 8, budget: low ? 2.5 : 4, shop: low ? 0.6 : 1, signs: low ? 90 : high ? 320 : 180 };
   };
   const H = (...a) => { let h = 2166136261; for (const v of a) { h ^= Math.round(v * 97) | 0; h = Math.imul(h, 16777619); } return hash(h >>> 0); };
   const deg = n => allEdgesAt(n).length;
@@ -1487,6 +1488,11 @@ function buildWorld() {
     }
     return { w: max, hit: null };
   }
+  // pedestrian walking lines (W.walks rings, ~0.75 m from the kerb): props keep ≥ 0.4 m from them
+  const WALKG = new Grid(8);
+  function walkIndex() { for (const r of W.walks) for (let i = 0; i < r.P.length; i++) { const a = r.P[i], b = r.P[(i + 1) % r.P.length], sg = { a, b }; WALKG.insertBox(sg, Math.min(a.x, b.x), Math.min(a.z, b.z), Math.max(a.x, b.x), Math.max(a.z, b.z)); } }
+  function walkDist(x, z, r = 1) { let d = r; for (const sg of WALKG.query(x, z, r, [], QSTAMP++)) { const c = segClosest(x, z, sg.a.x, sg.a.z, sg.b.x, sg.b.z); d = Math.min(d, Math.hypot(c.x - x, c.z - z)); } return d; }
+  const offWalk = (x, z, r) => walkDist(x, z, r + 0.1) >= r;
   const nearPole = (x, z, r) => ST.poleGrid.query(x, z, r, [], QSTAMP++).some(p => Math.hypot(p.x - x, p.z - z) < r);
   const inLandmark = (x, z) => ST.lmPolys.some(L => x >= L.bb[0] && x <= L.bb[2] && z >= L.bb[1] && z <= L.bb[3] && pointInPoly(x, z, L.P));
   const excluded = (x, z) => ST.excl.some(c => Math.hypot(c.x - x, c.z - z) < c.r);
@@ -1496,6 +1502,7 @@ function buildWorld() {
     for (let ix = Math.floor(o.bb[0] / s); ix <= Math.floor(o.bb[2] / s); ix++)
       for (let iz = Math.floor(o.bb[1] / s); iz <= Math.floor(o.bb[3] / s); iz++) { const a = g.map.get(g.key(ix, iz)); if (!a) continue; const i = a.indexOf(o); if (i >= 0) a.splice(i, 1); }
   }
+  const rectFree = (x, z, ux, uz, hl, hw) => [[0, 0], [1, 1], [1, -1], [-1, 1], [-1, -1]].every(([a, b]) => !insideBld(x + ux * hl * a - uz * hw * b, z + uz * hl * a + ux * hw * b));
   const rectPoly = (x, z, fx, fz, hl, hw) => [{ x: x + fx * hl - fz * hw, z: z + fz * hl + fx * hw }, { x: x + fx * hl + fz * hw, z: z + fz * hl - fx * hw }, { x: x - fx * hl + fz * hw, z: z - fz * hl - fx * hw }, { x: x - fx * hl - fz * hw, z: z - fz * hl + fx * hw }];
 
   // ------------------------------------------------------------ Colombian nomenclature: "Calle 30 # 28-50" [EST]
@@ -1668,16 +1675,18 @@ function buildWorld() {
       if (span < 3) continue;
       const n = Math.max(1, Math.round(span / 32)), list = [];
       for (let k = 0; k <= n; k++) {
+        const before = list.length;
         for (const dj of [0, 2.5, -2.5, 5]) {
           const s = clamp(tA + span * k / n + dj, 1, e.L - 1), p = edgePoint(e, s);
           let nx = -p.dz, nz = p.dx; const sd = sgn * (nx * REF[0] + nz * REF[1] >= 0 ? 1 : -1); nx *= sd; nz *= sd;
           const kx = p.x + nx * e.w / 2, kz = p.z + nz * e.w / 2, ww = walkWidth(kx, kz, nx, nz, 1.6);
-          if (ww.w < 0.5 || ww.hit === 'r') { ST.stats.polesSkipped++; continue; }   // facade at the kerb, or a thin median
+          if (ww.w < 0.5 || ww.hit === 'r') continue;   // facade at the kerb, or a thin median
           const off = ww.w >= 1.4 ? 0.3 : 0.25, x = kx + nx * off, z = kz + nz * off;
-          if (groundAt(x, z) < KERB * 0.5 || insideBld(x, z) || nearPole(x, z, 7) || inLandmark(x, z)) continue;
+          if (groundAt(x, z) < KERB * 0.5 || insideBld(x, z) || !offWalk(x, z, 0.35) || nearPole(x, z, 7) || inLandmark(x, z)) continue;
           const pole = { x, z, rx: -nx, rz: -nz, e: e.i, k: list.length, lamp: list.length % (MAIN.has(e.cls) ? 2 : 3) === 0, tr: H(x, z, 3) < 0.14 };
           list.push(pole); ST.poleGrid.insertBox(pole, x - 0.1, z - 0.1, x + 0.1, z + 0.1); break;
         }
+        if (list.length === before) ST.stats.polesSkipped++;
       }
       if (list.length) byEdge.set(e.i, list);
     }
@@ -1738,7 +1747,7 @@ function buildWorld() {
         if (groundAt(x, z) < KERB * 0.5) continue;
         // corner sidewalk width measured from both kerbs
         const kA = walkWidth(N.x + ax * (wB + 1.0) + bxx * wA, N.z + az * (wB + 1.0) + bzz * wA, bxx, bzz, 1.6), kB = walkWidth(N.x + bxx * (wA + 1.0) + ax * wB, N.z + bzz * (wA + 1.0) + az * wB, ax, az, 1.6);
-        if (kA.w >= 1.4 && kB.w >= 1.4 && !insideBld(x, z) && !nearPole(x, z, 0.8) && plateClear(x + A.x * 0.18, z + A.z * 0.18, A.x, A.z) && plateClear(x + B.x * 0.18, z + B.z * 0.18, B.x, B.z)) {
+        if (kA.w >= 1.4 && kB.w >= 1.4 && !insideBld(x, z) && offWalk(x, z, 0.35) && !nearPole(x, z, 0.8) && plateClear(x + A.x * 0.18, z + A.z * 0.18, A.x, A.z) && plateClear(x + B.x * 0.18, z + B.z * 0.18, B.x, B.z)) {
           chunkAt(x, z).plates.push({ mode: 'post', x, z, n1: A.o.e.name, d1: A, n2: B.o.e.name, d2: B }); ST.stats.plates++; done = true; break;
         }
         // wall-mounted: on the facade along each street, 1.6 m from the corner, facing that street
@@ -1767,7 +1776,7 @@ function buildWorld() {
   function layoutPoints() {
     const pts = D.points || {};
     for (const [E, N] of pts.bus_stop || []) {   // [OSM] bus stops
-      const k = kerbSpot(E / 10, -N / 10, 0.3); if (!k || groundAt(k.x, k.z) < KERB * 0.5 || insideBld(k.x, k.z)) continue;
+      const k = kerbSpot(E / 10, -N / 10, 0.3); if (!k || groundAt(k.x, k.z) < KERB * 0.5 || insideBld(k.x, k.z) || !offWalk(k.x, k.z, 0.3)) continue;
       const ww = walkWidth(k.x - k.nx * 0.3, k.z - k.nz * 0.3, k.nx, k.nz, 2.6);
       const bs = { ...k, ux: k.p.dx, uz: k.p.dz, ww: ww.w };
       chunkAt(k.x, k.z).bus.push(bs); ST.excl.push({ x: k.x, z: k.z, r: 14 });
@@ -1778,7 +1787,7 @@ function buildWorld() {
       const e = ne.e; let toB = ne.s > e.L / 2; if (e.o === 1) toB = true; else if (e.o === -1) toB = false;
       const s = toB ? Math.max(1, e.L - 7) : Math.min(e.L - 1, 7), p = edgePoint(e, s), fx = toB ? p.dx : -p.dx, fz = toB ? p.dz : -p.dz;
       const rx = -fz, rz = fx, off = e.w / 2 + 0.3, sx = p.x + rx * off, sz = p.z + rz * off;
-      if (groundAt(sx, sz) < KERB * 0.5 || insideBld(sx, sz) || walkWidth(p.x + rx * e.w / 2, p.z + rz * e.w / 2, rx, rz, 0.75).w < 0.5) continue;
+      if (groundAt(sx, sz) < KERB * 0.5 || insideBld(sx, sz) || !offWalk(sx, sz, 0.3) || walkWidth(p.x + rx * e.w / 2, p.z + rz * e.w / 2, rx, rz, 0.75).w < 0.5) continue;
       chunkAt(sx, sz).stops.push({ kind, x: sx, z: sz, fx, fz, e, s: toB ? Math.max(0.5, e.L - 8.3) : Math.min(e.L - 0.5, 8.3) });
     }
   }
@@ -1814,7 +1823,7 @@ function buildWorld() {
           const ss = s - dir * 22; if (ss < 3 || ss > e.L - 3) continue;
           const q = edgePoint(e, ss), fx = q.dx * dir, fz = q.dz * dir, rx = -fz, rz = fx, kx = q.x + rx * e.w / 2, kz = q.z + rz * e.w / 2;
           if (walkWidth(kx, kz, rx, rz, 0.75).w < 0.5) continue;
-          const x = kx + rx * 0.3, z = kz + rz * 0.3; if (groundAt(x, z) < KERB * 0.5 || insideBld(x, z)) continue;
+          const x = kx + rx * 0.3, z = kz + rz * 0.3; if (groundAt(x, z) < KERB * 0.5 || insideBld(x, z) || !offWalk(x, z, 0.3)) continue;
           signs.push({ x, z, fx, fz });
         }
         chunkAt(p.x, p.z).xings.push({ e, s, signs }); ST.stats.xings++;
@@ -2097,6 +2106,7 @@ function buildWorld() {
           if (H(seed, 6) < (dC < 600 ? 0.42 : 0.2)) motoRow(ne.e, ne.s, sd, 1 + Math.floor(H(seed, 7) * (dC < 600 ? 4 : 2)), seed);
           if (corner && CORNER.has(GENERIC[gi][0]) && H(seed, 8) < 0.35 && f.fd > 2.4) {   // plastic chairs + table outside the tienda
             const tx = x + f.nx * 0.45, tz = z + f.nz * 0.45, a = Math.atan2(-f.nz, f.nx);
+            if (!rectFree(tx + f.nx * 0.05, tz + f.nz * 0.05, f.ux, f.uz, 1.1, 0.3) || !offWalk(tx, tz, 0.7)) continue;
             bx(near, tx, KERB + 0.36, tz, 0.6, 0.72, 0.6, f.ux, f.uz, col('#f2f2f0'));
             for (const s2 of [-0.75, 0.75]) mergeGeo(near, chairs[H(seed, 9) < 0.5 ? 0 : 1], tx + f.ux * s2, KERB, tz + f.uz * s2, a + (s2 > 0 ? 0.3 : -0.3), [1, 1, 1]);
             addSolid(c, rectPoly(tx, tz, f.ux, f.uz, 1.1, 0.35), 0.8, 'prop');
@@ -2140,7 +2150,7 @@ function buildWorld() {
       face(tb, x + nx * 0.037, y, z + nz * 0.037, nx, nz, 1.0, 0.25, ST.special.paradero);
       if (bs.ww >= 1.75) {   // back to the facade, clear of the walking line (0.75 m from the kerb)
         const bxp = x + ux * 1.6 + nx * (bs.ww - 0.62), bzp = z + uz * 1.6 + nz * (bs.ww - 0.62);
-        if (!insideBld(bxp + nx * 0.25, bzp + nz * 0.25) || bs.ww >= 2.5) { bench(near, bxp, bzp, ux, uz, -nx, -nz); addSolid(c, rectPoly(bxp, bzp, ux, uz, 0.9, 0.22), 0.8, 'bench'); }
+        if (rectFree(bxp, bzp, ux, uz, 0.95, 0.25) && offWalk(bxp, bzp, 0.45)) { bench(near, bxp, bzp, ux, uz, -nx, -nz); addSolid(c, rectPoly(bxp, bzp, ux, uz, 0.9, 0.22), 0.8, 'bench'); }
       }
       if (owned.has(bs.e.i)) paintRange(mid, bs.e, bs.side, bs.s - 8, bs.s + 8, YEL);
     }
@@ -2182,7 +2192,7 @@ function buildWorld() {
         let nx = -uz, nz = ux; const bxp0 = lerp(a.x, b.x, tt), bzp0 = lerp(a.z, b.z, tt);
         if (!pointInPoly(bxp0 + nx * 2, bzp0 + nz * 2, P)) { nx = -nx; nz = -nz; }
         const x = bxp0 + nx * 1.7, z = bzp0 + nz * 1.7;
-        if (!pointInPoly(x, z, P) || groundAt(x, z) < KERB * 0.5 || insideBld(x, z) || nearSolid(x, z, 1.4)) continue;
+        if (!pointInPoly(x, z, P) || groundAt(x, z) < KERB * 0.5 || !rectFree(x, z, ux, uz, 0.95, 0.3) || !offWalk(x, z, 0.5) || nearSolid(x, z, 1.4)) continue;
         bench(near, x, z, ux, uz, nx, nz); addSolid(c, rectPoly(x, z, ux, uz, 0.9, 0.22), 0.8, 'bench');
         if (placed++ % 2 === 0) { const bx2 = x + ux * 1.45, bz2 = z + uz * 1.45; prism(near, bx2, KERB, bz2, 0.22, 0.24, 0.78, 8, BIN); addSolid(c, circlePoly(bx2, bz2, 0.26, 6), 0.8, 'bin'); }
       }
@@ -2190,7 +2200,7 @@ function buildWorld() {
         const o = obb(bol.P);
         for (let k = 0; k < 8; k++) {
           const an = (k + 0.5) / 8 * TAU, cx = Math.cos(an), sz = Math.sin(an), x = o.cx + cx * 14.2, z = o.cz + sz * 14.2;
-          if (nearSolid(x, z, 1.2)) continue;
+          if (nearSolid(x, z, 1.2) || !rectFree(x, z, -sz, cx, 0.95, 0.3) || !offWalk(x, z, 0.5)) continue;
           bench(near, x, z, -sz, cx, -cx, -sz); addSolid(c, rectPoly(x, z, -sz, cx, 0.9, 0.22), 0.8, 'bench');
         }
       }
@@ -2260,7 +2270,7 @@ function buildWorld() {
   // ------------------------------------------------------------ hooks
   HOOKS.buildStreet = () => {
     const t0 = performance.now(), L = lvl();
-    ST.BLD = new WeakSet(W.buildings);
+    ST.BLD = new WeakSet(W.buildings); walkIndex();
     for (const k in W.landmarks) for (const l of W.landmarks[k]) if (k !== 'park') ST.lmPolys.push(l);
     const bol = (W.landmarks.park || [])[0]; ST.P0 = bol ? bol.c : { x: 0, z: 0 };
     // exclusion zones for parked vehicles: mission / NPC kerb spots (approximate, see 40_missions.js / 45_npcs.js) [APX]
@@ -3064,6 +3074,7 @@ const LM_SELF_APPLY = true;
       const n = { x: S > 0 ? dz / l : -dz / l, z: S > 0 ? -dx / l : dx / l }, F = new Face(gb, { x: (p.x + q.x) / 2, z: (p.z + q.z) / 2 }, { x: dx / l, z: dz / l }, n);
       F.box(0, 0, 0.3, 7.2, 9.6, 0.6, CR2); F.rect(-2.3, 2.3, 0, 6.0, 0.62, C.dark); F.rect(-3.0, 3.0, 7.0, 8.6, 0.62, col('#3d6b4f'));
       F.box(0, 7.55, 0.45, l - 1, 0.3, 0.9, CR2);
+      for (const sg of [-1, 1]) F.box(sg * (l / 4 + 1.8), 3.3, 0.8, l / 2 - 5, 0.18, 1.6, col('#cfc8b6'));   // street canopy over the shop fronts
     }
     add(gb, 'market', MAT_FAC);
     solid(P, 8, 'lm:market');
@@ -3863,7 +3874,7 @@ class Agent {
     if (t.bici) this.vMax = 4.2 + rand() * 1.8;                 // 15-21 km/h
     else if (t.canero) this.vMax = 6.0 + rand() * 1.2;          // ≈ 22-26 km/h
     else this.vMax = base * k * (t.moto ? (t.pax ? 1.0 : 1.15) : t.chiva ? 0.72 : (t.bus || t.urban) ? 0.8 : t.camion ? 0.85 : 1);
-    this.v = Math.min(this.vMax * 0.7, 8); this.laneSeed = rand(); if (this.mode !== 'drive') this.setDoors(false); this.mode = 'drive'; this.filterT = 0; this.passT = 0; this.blockT = 0; this.greenT = 9; this.wasRed = false;
+    this.v = Math.min(this.vMax * 0.7, 8); this.laneSeed = rand(); if (this.mode !== 'drive') this.setDoors(false); this.mode = 'drive'; this.filterT = 0; this.passT = 0; this.passWide = false; this.blockT = 0; this.waitT = 0; this.greenT = 9; this.wasRed = false;
     this.nextStop = 60 + rand() * 220; this.pickCD = 4 + rand() * 6; this.thinkT = rand() * 0.5; this.waitPed = null; this.blocker = null; this.blkV = 0;
     if (this.hailer) { this.pax = this.type === 'mototaxi' ? !!(this.variant & VB.PAX) : rand() < 0.45; this.paxT = 30 + rand() * 90; }
     this.lat = this.baseLane();
@@ -3886,20 +3897,33 @@ class Agent {
   }
   lane() { return this.lat; }
   kerbLane() { return this.e.w / 2 - this.hw - 0.3; }
-  latLimit(v) { const L = Math.max(0, this.e.w / 2 - this.hw - 0.15); return clamp(v, this.e.o === 0 ? Math.min(-0.2, L) : -L, L); }
+  latLimit(v) { const L = Math.max(0, this.e.w / 2 - this.hw - 0.15); return clamp(v, this.e.o === 0 && !(this.passWide && this.passT > 0) ? Math.min(-0.2, L) : -L, L); }
   filterLane(front) {   // where a moto squeezes through: centre line / between lanes / along the kerb; spread out at the stop line
     const e = this.e, w = e.w, edge = w / 2 - 0.42;
+    if (e.o === 0 && this.t.bici) return edge;
     if (e.o === 0) return front ? 0.3 + this.laneSeed * (edge - 0.3) : (this.laneSeed < 0.55 ? 0.2 : edge);
+    if (this.t.bici) return edge;
     if (front) return (this.laneSeed * 2 - 1) * edge;
     if (w >= 8.5) return this.laneSeed < 0.4 ? 0 : this.laneSeed < 0.75 ? edge : -edge;
     return this.laneSeed < 0.5 ? edge : -edge;
   }
-  passLane() { const e = this.e, base = this.baseLane(); if (e.o === 0) return base - 1.15; const L = e.w / 2 - this.hw - 0.3; return base < -0.1 ? L : -L; }
-  canPass(b) {
-    if (!b || b === 'ped' || b.isWagon || b.t?.canero) return false;   // nobody overtakes a cane train: they queue
-    if (b.two) return (b.v || 0) < this.vMax * 0.7;
-    if (b.mode === 'dwell') return this.e.o !== 0 && this.e.w >= 6.5;  // stopped bus/taxi: pass on one-ways, wait (and honk) on two-ways
-    return false;
+  passLane() { const e = this.e, base = this.baseLane(); if (e.o === 0) return this.passWide ? -e.w / 4 : base - 1.15; const L = e.w / 2 - this.hw - 0.3; return base < -0.1 ? L : -L; }
+  canPass(b) {   // 0 = no, 1 = squeeze past, 2 = go round through the oncoming lane
+    if (!b || b === 'ped' || b.isWagon || b.t?.canero) return 0;   // nobody overtakes a cane train: they queue
+    if (b.two) return (b.v || 0) < this.vMax * 0.7 ? 1 : 0;
+    const parked = b.mode === 'dwell' || (!(b instanceof Agent) && this.blkV < 0.3);   // stopped bus/taxi, stationary player / parked car
+    if (!parked) return 0;
+    if (this.e.o !== 0) return this.e.w >= 6 ? 1 : 0;
+    // two-way street: wait (and honk) a moment, then go round through the oncoming lane when it is clear
+    return this.waitT > 2.5 && this.oncomingClear() ? 2 : 0;
+  }
+  oncomingClear() {
+    for (const o of TRAFFIC.grid.query(this.x + this.fx * 18, this.z + this.fz * 18, 22, [], QSTAMP++)) {
+      if (o === this || !o.active || o.parent === this || (o.fx * this.fx + o.fz * this.fz) > -0.5) continue;
+      const dx = o.x - this.x, dz = o.z - this.z, along = dx * this.fx + dz * this.fz, lat = -dx * this.fz + dz * this.fx;
+      if (along > -4 && along < 40 && lat < 0.6) return false;
+    }
+    return true;
   }
   allowed(e) {
     const c = e.cls; if ((CLASS_SPEED[c] || 0) <= 0) return false;
@@ -3954,12 +3978,13 @@ class Agent {
     // lateral behaviour: motos filter, cars overtake slow bikes / stopped buses where there is room
     let latT = this.baseLane();
     if (this.mode !== 'drive') latT = this.kerbLane();
-    else if (t.moto) {
+    else if (this.two) {
       const slowAhead = ahead < 14 && blk && blk !== 'ped' && !blk.two && this.blkV < 4;
-      if ((red && remain < 45) || slowAhead) this.filterT = 2.5;
+      if ((t.moto && red && remain < 45) || slowAhead) this.filterT = 2.5;
       if (this.filterT > 0) { this.filterT -= dt; latT = this.filterLane(red && remain < 18); if (slowAhead && rand() < 0.004) this.honk(0.12); }
     } else if (!this.big && !t.bici) {
-      if (ahead < 18 && this.canPass(blk)) this.passT = 2.5;
+      if (this.passT <= 0 && ahead < 18) { const c = this.canPass(blk); if (c) { this.passWide = c === 2; this.passT = c === 2 ? 4 : 2.5; this.passObj = blk; } }
+      else if (this.passT > 0 && ahead < 18 && blk === this.passObj) this.passT = Math.max(this.passT, 1.5);
       if (this.passT > 0) { this.passT -= dt; latT = this.passLane(); }
     }
     latT = this.latLimit(latT);
@@ -3992,8 +4017,9 @@ class Agent {
     if (this.honkT > 0) this.honkT -= dt;
     // honk culture: blocked for a while, the instant-green "pi-pi", nudging pedestrians off the road
     if (this.mode === 'drive' && !red && blk && blk !== 'ped' && free < 3 && this.v < 0.5 && this.blkV < 0.5) this.blockT += dt; else this.blockT = 0;
-    if (this.blockT > 2 + this.laneSeed * 3) { this.blockT = 0; this.honk(0.25 + rand() * 0.35, rand() < 0.4); }
-    else if (this.greenT > 0.5 && this.greenT < 2.5 && blk && blk !== 'ped' && free < 4 && this.blkV < 0.4 && rand() < 0.05) this.honk(0.1, true);
+    if (this.blockT > 0) this.waitT += dt; else this.waitT = 0;
+    if (this.blockT > 1.5 + this.laneSeed * 2.5) { this.blockT = 0.01; this.honk(0.25 + rand() * 0.35, rand() < 0.4); }
+    else if (this.greenT > 0.4 && this.greenT < 2.5 && blk && blk !== 'ped' && free < 4 && this.blkV < 0.4 && rand() < 0.08) this.honk(0.1, true);
     else if (blk === 'ped' && free < 6 && this.v < 1.5 && rand() < 0.012) this.honk(0.15);
   }
   honk(k = 0.3, dbl = false) {   // short, rate-limited (per agent + global), spatial via AUDIO.horn
@@ -7340,10 +7366,11 @@ function savePosition() {
 function boot() {
   const t0 = performance.now();
   const stats = buildWorld();
-  // optional modules owned by other workstreams (each defines its functions in its own file)
-  for (const f of ['buildLandmarksDetailed', 'buildStreet', 'initAtmosphere']) { try { const fn = HOOKS[f]; if (fn) fn(); } catch (e) { console.error(f, e); } }
+
   renderMapRaster();
   initTraffic(); initPeds(); initPursuit(); initMissions(); initNpcs(); initDealer(); setupBigMap();
+  // optional modules owned by other workstreams (each defines its functions in its own file)
+  for (const f of ['buildLandmarksDetailed', 'buildStreet', 'initAtmosphere', 'initCombat']) { try { const fn = HOOKS[f]; if (fn) fn(); } catch (e) { console.error(f, e); } }
   if (IS_TOUCH) setupTouch();
   G.car = new PlayerCar(SAVE.vehicle?.type && VTYPES[SAVE.vehicle.type] ? SAVE.vehicle.type : 'hatch', SAVE.vehicle?.color || SAVE.color);
   G.walker = new Walker();
@@ -7392,7 +7419,7 @@ function loop(now) {
   updateMissions(dt, ctx);
   updateDealer(dt, ctx);
   updateNpcs(dt, ctx);
-  for (const f of ['updateStreet', 'updateAtmosphere']) { const fn = HOOKS[f]; if (fn) try { fn(dt, ctx); } catch (e) { console.error(f, e); HOOKS[f] = null; } }
+  for (const f of ['updateStreet', 'updateAtmosphere', 'updateCombat']) { const fn = HOOKS[f]; if (fn) try { fn(dt, ctx); } catch (e) { console.error(f, e); HOOKS[f] = null; } }
   for (const pc of G.parked) pc.update(dt, input);
   // enter / exit / steal / talk
   const K = IS_TOUCH ? 'Usar' : 'E';
