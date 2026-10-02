@@ -235,12 +235,13 @@ body.touch #phone.on{transform:translate(50%,0)}
   body.touch #br{top:calc(124px + var(--sa-t));left:calc(10px + var(--sa-l));right:auto;align-items:flex-start;text-align:left}
   body.touch #mstack{align-items:flex-start} body.touch #mstack .c{background:linear-gradient(270deg,rgba(0,0,0,0),rgba(0,0,0,.72) 26%);padding:3px 16px 3px 8px}
   body.touch #tCam,body.touch #tPhone,body.touch #tRadio{top:calc(10px + var(--sa-t))}
-  body.touch #tCam{right:calc(50% - 82px)} body.touch #tPhone{right:calc(50% - 23px)} body.touch #tRadio{right:calc(50% + 36px)}
+  body.touch #stars{position:absolute;right:calc(100% + 8px);top:6px}   /* QA: stars pushed Menú under the Mano button */
+  body.touch #tCam{right:calc(50% - 122px)} body.touch #tPhone{right:calc(50% - 63px)} body.touch #tRadio{right:calc(50% - 4px)}   /* QA: was under the help box */
   body.touch #radioPop{top:calc(66px + var(--sa-t))} body.touch #mtitle{top:44%}
   body.touch #phone{right:calc(36% + 0px);transform:translate(50%,calc(100% + 40px));height:calc(100vh - 20px);width:min(300px,40vw);aspect-ratio:auto;max-height:none}
   body.touch #phone .grid{gap:6px 4px;padding-top:2px} body.touch #phone .app .ic{width:44px;height:44px}
   body.touch #phone.on{transform:translate(50%,0)}
-  body.touch #tl{top:calc(10px + var(--sa-t));left:calc(160px + var(--sa-l));max-width:calc(50vw - 200px)}
+  body.touch #tl{top:calc(10px + var(--sa-t));left:calc(160px + var(--sa-l));max-width:calc(50vw - 210px)}
 }
 @media (max-width:760px){#tl{max-width:calc(100vw - 180px)} #subs{min-width:0;width:92vw}}
 
@@ -834,61 +835,6 @@ class GB {
 const Z3 = [0, 0, 0];
 function signedArea(P) { let s = 0; for (let i = 0; i < P.length; i++) { const p = P[i], q = P[(i + 1) % P.length]; s += p.x * q.z - q.x * p.z; } return s / 2; }
 
-// ---------------------------------------------------------------- facade texture (procedural, original)
-function makeFacadeTexture() {
-  // 3 rows, bottom to top in v: [commercial ground floor | residential ground floor | upper storey]; canvas y is flipped
-  const S = 256, cv = document.createElement('canvas'); cv.width = S; cv.height = S * 3;
-  const g = cv.getContext('2d');
-  g.fillStyle = '#ffffff'; g.fillRect(0, 0, S, S * 3);
-  for (let i = 0; i < 2000; i++) { g.fillStyle = `rgba(0,0,0,${Math.random() * 0.05})`; g.fillRect(Math.random() * S, Math.random() * S * 3, 3, 3); }
-  // upper storey (canvas 0..S): window with frame, reja and sill
-  g.fillStyle = '#cfcac0'; g.fillRect(0, 0, S, 10);
-  g.fillStyle = '#d9d3c4'; g.fillRect(58, 44, 140, 132);
-  g.fillStyle = '#3b4652'; g.fillRect(68, 54, 120, 112);
-  g.fillStyle = '#56636f'; g.fillRect(68, 54, 120, 30);
-  g.fillStyle = '#2a2f33'; for (let x = 76; x < 188; x += 14) g.fillRect(x, 54, 4, 112);
-  g.fillStyle = '#bdb6a6'; g.fillRect(50, 176, 156, 10);
-  // residential ground floor (canvas S..2S): wooden/metal door + barred window, zócalo
-  let y0 = S;
-  g.fillStyle = '#bfb8a8'; g.fillRect(0, y0 + S - 30, S, 30);
-  g.fillStyle = '#6b4a35'; g.fillRect(24, y0 + 62, 70, 168);              // door
-  g.fillStyle = '#5a3d2b'; g.fillRect(30, y0 + 70, 58, 70); g.fillRect(30, y0 + 150, 58, 70);
-  g.fillStyle = '#d9d3c4'; g.fillRect(120, y0 + 70, 116, 110);            // window frame
-  g.fillStyle = '#39434c'; g.fillRect(128, y0 + 78, 100, 94);
-  g.fillStyle = '#26292b'; for (let x = 134; x < 228; x += 12) g.fillRect(x, y0 + 78, 4, 94); g.fillRect(128, y0 + 122, 100, 4);
-  g.fillStyle = '#c9c2b2'; g.fillRect(14, y0 + 48, 228, 10);
-  // commercial ground floor (canvas 2S..3S): shop opening, shutter, sign band
-  y0 = S * 2;
-  g.fillStyle = '#bfb8a8'; g.fillRect(0, y0 + S - 26, S, 26);
-  g.fillStyle = '#6e7377'; g.fillRect(26, y0 + 40, 204, 190);
-  g.fillStyle = '#80868a'; for (let y = y0 + 44; y < y0 + 228; y += 9) g.fillRect(26, y, 204, 3);
-  g.fillStyle = '#2f3a44'; g.fillRect(26, y0 + 40, 204, 60);
-  g.fillStyle = '#d9d3c4'; g.fillRect(14, y0 + 26, 228, 14);
-  const t = new THREE.CanvasTexture(cv);
-  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter;
-  return t;
-}
-const facadeTex = makeFacadeTexture();
-function facadeMaterial() {
-  const m = new THREE.MeshLambertMaterial({ vertexColors: true });
-  m.onBeforeCompile = sh => {
-    sh.uniforms.facTex = { value: facadeTex };
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec3 fac;\nvarying vec3 vFac;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFac = fac;');
-    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform sampler2D facTex;\nvarying vec3 vFac;')
-      .replace('#include <color_fragment>', `#include <color_fragment>
-      if (vFac.z > 0.5) {
-        vec2 raw = vec2(vFac.x / 3.4, vFac.y / 3.1);
-        float storey = floor(raw.y);
-        float row = storey < 0.5 ? (vFac.z > 1.5 ? 1.0 : 0.0) : 2.0;   // fac.z: 1 = shop front, 2 = house front
-        vec2 uv = vec2(fract(raw.x), (row + fract(raw.y)) / 3.0);
-        vec3 t = textureGrad(facTex, uv, dFdx(raw) * vec2(1.0, 1.0 / 3.0), dFdy(raw) * vec2(1.0, 1.0 / 3.0)).rgb;
-        diffuseColor.rgb *= t;
-      }`);
-  };
-  return m;
-}
-const MAT_FAC = facadeMaterial();
 const MAT_V = new THREE.MeshLambertMaterial({ vertexColors: true });
 const MAT_V_DS = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
 
@@ -1009,59 +955,6 @@ function ribbon(gb, P, w, y, cl, startTrim = 0, endTrim = 0) {
     gb.quad([a.x + nx, y, a.z + nz], [b.x + nx, y, b.z + nz], [b.x - nx, y, b.z - nz], [a.x - nx, y, a.z - nz], [0, 1, 0], cl);
   }
 }
-
-// ---------------------------------------------------------------- buildings, streamed per chunk
-// Chunks are grouped at load (cheap) and their geometry is built only when the player approaches,
-// earlier in the direction of travel. HOOKS.replacesBuilding(b) lets detailed landmark models remove generic ones.
-const BCH = { map: new Map(), built: 0, tris: 0 };
-function groupBuildings() {
-  for (const b of W.buildings) {
-    const k = Math.floor(b.c.x / CHUNK) + ':' + Math.floor(b.c.z / CHUNK);
-    let c = BCH.map.get(k); if (!c) BCH.map.set(k, c = { list: [], bb: [Infinity, Infinity, -Infinity, -Infinity], mesh: null, cx: 0, cz: 0 });
-    c.list.push(b); c.bb[0] = Math.min(c.bb[0], b.bb[0]); c.bb[1] = Math.min(c.bb[1], b.bb[1]); c.bb[2] = Math.max(c.bb[2], b.bb[2]); c.bb[3] = Math.max(c.bb[3], b.bb[3]);
-  }
-  for (const c of BCH.map.values()) { c.cx = (c.bb[0] + c.bb[2]) / 2; c.cz = (c.bb[1] + c.bb[3]) / 2; }
-}
-function buildBuildingChunk(c) {
-  const gb = new GB(), skip = HOOKS.replacesBuilding;
-  for (const b of c.list) {
-    if (skip && skip(b)) continue;
-    const hsh = b.id ? strHash(b.id) : (Math.imul(Math.round(b.c.x * 10), 73856093) ^ Math.imul(Math.round(b.c.z * 10), 19349663)) >>> 0;
-    let wall = col(WALLS[hsh % WALLS.length]);
-    if (b.k === 'church') wall = col('#efe7d6');
-    if (b.k === 'industrial' || b.k === 'warehouse' || b.k === 'roof' || b.k === 'shed' || b.k === 'farm') wall = col(['#b8b6ae', '#c9c4b6', '#a9b0b3'][hsh % 3]);
-    if (b.k === 'greenhouse') wall = col('#d8e6dc');
-    const h = b.h, y0 = KERB - 0.02;
-    const plain = b.k === 'roof' || b.k === 'greenhouse' || b.k === 'industrial' || b.k === 'shed' || b.k === 'farm';
-    // shop fronts: cadastre "Comercial", or houses in the commercial centre (many ground floors are shops), else a house front
-    const dC = Math.hypot(b.c.x, b.c.z);
-    const shop = b.k === 'commercial' || b.k === 'retail' || b.k === 'yes' && dC < 900 || (b.k === 'house' && dC < 700 && (hsh >>> 4) % 100 < 50);
-    const facade = !plain && h > 2.6 ? (shop ? 1 : 2) : false;
-    if (b.k === 'roof') {         // open shed: roof only on thin posts (approximate)
-      gb.cap(b.P, null, h, ROOF_FLAT); gb.cap(b.P, null, h - 0.15, shade(ROOF_FLAT, 0.6), true); continue;
-    }
-    const a = Math.abs(signedArea(b.P));
-    const parapet = b.st > 1 && a > 50 ? 0.6 : 0;
-    gb.walls(b.P, y0, h + parapet, wall, facade);
-    const tile = b.st <= 2 && a < 400 && (hsh >>> 8) % 100 < 45;
-    const roofC = b.k === 'shed' || b.k === 'farm' ? col(['#8d969a', '#a3a7a1', '#9a6d55'][hsh % 3]) : tile ? ROOF_TILE : a > 900 ? ROOF_DARK : ROOF_FLAT;
-    gb.cap(b.P, null, tile ? h + parapet : h, shade(roofC, 0.92 + 0.16 * hash(hsh)));
-  }
-  c.mesh = addMesh(gb.build(), MAT_FAC); BCH.built++; BCH.tris += gb.count;
-}
-// build what's near (and ahead); hide what's far. budget = chunks built per call
-function streamBuildings(x, z, vx = 0, vz = 0, budget = 2) {
-  const R = drawRange(), ax = x + vx * 4, az = z + vz * 4;
-  const todo = [];
-  for (const c of BCH.map.values()) {
-    const d = Math.min(bboxDist(c.bb, x, z), bboxDist(c.bb, ax, az));
-    if (c.mesh) c.mesh.visible = d < R;
-    else if (d < R) todo.push([d, c]);
-  }
-  if (todo.length) { todo.sort((p, q) => p[0] - q[0]); for (let i = 0; i < Math.min(budget, todo.length); i++) buildBuildingChunk(todo[i][1]); }
-  return todo.length;
-}
-function buildBuildings() { groupBuildings(); return 0; }
 
 // ---------------------------------------------------------------- landmarks (approximate volumes, see credits)
 function obb(P) {     // oriented box from PCA of polygon vertices
@@ -1270,48 +1163,6 @@ function updateSignals(t) {
   SIG.lamp.instanceColor.needsUpdate = true;
 }
 
-// ---------------------------------------------------------------- vegetation (OSM trees; park trees placed inside documented park areas)
-function buildTrees() {
-  const trees = [], palms = [];
-  for (const [e, n] of D.trees) trees.push({ x: e / 10, z: -n / 10, s: 0.8 + hash(e) * 0.5 });
-  const park = (W.landmarks.park || [])[0];
-  rngState = 777;
-  for (const p of D.parks) {
-    const P = ptsOf(p.p), bb = bboxOf(P), a = Math.abs(signedArea(P));
-    const isBolivar = park && pointInPoly(centroid(P).x, centroid(P).z, park.P);
-    if (isBolivar && typeof DETAILED_LANDMARKS !== 'undefined' && DETAILED_LANDMARKS.has('park_bolivar')) continue;   // real planting from 15_landmarks
-    const n = Math.min(isBolivar ? 34 : 60, Math.floor(a / (p.k === 'pitch' ? 1e9 : 170)));
-    for (let i = 0, tries = 0; i < n && tries < n * 8; tries++) {
-      const x = lerp(bb[0], bb[2], rand()), z = lerp(bb[1], bb[3], rand());
-      if (!pointInPoly(x, z, P)) continue;
-      if (isBolivar) {
-        const o = obb(park.P), dx = x - o.cx, dz = z - o.cz;
-        if (Math.hypot(dx, dz) < 15) continue;
-        palms.push({ x, z, s: 0.85 + rand() * 0.35 });
-      } else trees.push({ x, z, s: 0.7 + rand() * 0.7 });
-      i++;
-    }
-  }
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), pos = new THREE.Vector3();
-  // broad tree (samán-like crown)
-  const tg = new GB(); { const t = new THREE.CylinderGeometry(0.25, 0.4, 4, 6); t.translate(0, 2, 0); mergeInto(tg, t, col('#6b5a45')); const c = new THREE.IcosahedronGeometry(3.6, IS_TOUCH ? 0 : 1); c.scale(1.35, 0.7, 1.35); c.translate(0, 5.6, 0); mergeInto(tg, c, col('#4d7a35')); }
-  const pg = new GB(); { const t = new THREE.CylinderGeometry(0.18, 0.28, 11, 6); t.translate(0, 5.5, 0); mergeInto(pg, t, col('#8b7f6b'));
-    for (let k = 0; k < 8; k++) { const f = new THREE.BoxGeometry(4.2, 0.08, 0.7); f.translate(2.1, 0, 0); f.rotateZ(-0.45); f.rotateY(k / 8 * TAU); f.translate(0, 11, 0); mergeInto(pg, f, col('#4f8a3a')); } }
-  const mk = (g, list) => {   // one InstancedMesh per chunk so far districts can be hidden
-    if (!list.length) return;
-    const geo = g.build(), groups = new Map();
-    list.forEach((t, i) => { const k = Math.floor(t.x / CHUNK) + ':' + Math.floor(t.z / CHUNK); (groups.get(k) || groups.set(k, []).get(k)).push([t, i]); });
-    for (const items of groups.values()) {
-      const im = new THREE.InstancedMesh(geo, MAT_V, items.length), bb = [Infinity, Infinity, -Infinity, -Infinity];
-      items.forEach(([t, i], j) => { pos.set(t.x, KERB, t.z); q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), hash(i * 13) * TAU); sc.set(t.s, t.s, t.s); m4.compose(pos, q, sc); im.setMatrixAt(j, m4); bb[0] = Math.min(bb[0], t.x - 6); bb[1] = Math.min(bb[1], t.z - 6); bb[2] = Math.max(bb[2], t.x + 6); bb[3] = Math.max(bb[3], t.z + 6); });
-      im.castShadow = QL.shadow > 0; im.computeBoundingSphere(); scene.add(im); registerChunkMesh(im, bb);
-    }
-  };
-  mk(tg, trees); mk(pg, palms);
-  // tree trunks as obstacles
-  for (const t of trees.concat(palms)) { const b = { P: circlePoly(t.x, t.z, 0.45, 6), h: 4, k: 'tree', id: 't', bb: [t.x - 0.5, t.z - 0.5, t.x + 0.5, t.z + 0.5], c: { x: t.x, z: t.z } }; bGrid.insertBox(b, ...b.bb); }
-  return trees.length + palms.length;
-}
 function circlePoly(x, z, r, n) { const P = []; for (let i = 0; i < n; i++) { const a = i / n * TAU; P.push({ x: x + Math.cos(a) * r, z: z + Math.sin(a) * r }); } return P; }
 
 // markers (mission targets)
@@ -1377,6 +1228,120 @@ function buildWorld() {
   buildGround(); buildBlocks(); stats.tris = buildBuildings(); buildLandmarks(); buildMarkings(); buildSignals(); stats.water = buildWaterRail(); stats.trees = buildTrees();
   return stats;
 }
+
+// ===== 11_buildings.js
+// Buildings: procedural facade texture/material and the streamed building chunks (cadastre/OSM/Microsoft footprints).
+// Uses GB, col, shade, WALLS, ROOF_* palettes and addMesh from 10_world.js.
+
+// ---------------------------------------------------------------- facade texture (procedural, original)
+function makeFacadeTexture() {
+  // 3 rows, bottom to top in v: [commercial ground floor | residential ground floor | upper storey]; canvas y is flipped
+  const S = 256, cv = document.createElement('canvas'); cv.width = S; cv.height = S * 3;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, S, S * 3);
+  for (let i = 0; i < 2000; i++) { g.fillStyle = `rgba(0,0,0,${Math.random() * 0.05})`; g.fillRect(Math.random() * S, Math.random() * S * 3, 3, 3); }
+  // upper storey (canvas 0..S): window with frame, reja and sill
+  g.fillStyle = '#cfcac0'; g.fillRect(0, 0, S, 10);
+  g.fillStyle = '#d9d3c4'; g.fillRect(58, 44, 140, 132);
+  g.fillStyle = '#3b4652'; g.fillRect(68, 54, 120, 112);
+  g.fillStyle = '#56636f'; g.fillRect(68, 54, 120, 30);
+  g.fillStyle = '#2a2f33'; for (let x = 76; x < 188; x += 14) g.fillRect(x, 54, 4, 112);
+  g.fillStyle = '#bdb6a6'; g.fillRect(50, 176, 156, 10);
+  // residential ground floor (canvas S..2S): wooden/metal door + barred window, zócalo
+  let y0 = S;
+  g.fillStyle = '#bfb8a8'; g.fillRect(0, y0 + S - 30, S, 30);
+  g.fillStyle = '#6b4a35'; g.fillRect(24, y0 + 62, 70, 168);              // door
+  g.fillStyle = '#5a3d2b'; g.fillRect(30, y0 + 70, 58, 70); g.fillRect(30, y0 + 150, 58, 70);
+  g.fillStyle = '#d9d3c4'; g.fillRect(120, y0 + 70, 116, 110);            // window frame
+  g.fillStyle = '#39434c'; g.fillRect(128, y0 + 78, 100, 94);
+  g.fillStyle = '#26292b'; for (let x = 134; x < 228; x += 12) g.fillRect(x, y0 + 78, 4, 94); g.fillRect(128, y0 + 122, 100, 4);
+  g.fillStyle = '#c9c2b2'; g.fillRect(14, y0 + 48, 228, 10);
+  // commercial ground floor (canvas 2S..3S): shop opening, shutter, sign band
+  y0 = S * 2;
+  g.fillStyle = '#bfb8a8'; g.fillRect(0, y0 + S - 26, S, 26);
+  g.fillStyle = '#6e7377'; g.fillRect(26, y0 + 40, 204, 190);
+  g.fillStyle = '#80868a'; for (let y = y0 + 44; y < y0 + 228; y += 9) g.fillRect(26, y, 204, 3);
+  g.fillStyle = '#2f3a44'; g.fillRect(26, y0 + 40, 204, 60);
+  g.fillStyle = '#d9d3c4'; g.fillRect(14, y0 + 26, 228, 14);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter;
+  return t;
+}
+const facadeTex = makeFacadeTexture();
+function facadeMaterial() {
+  const m = new THREE.MeshLambertMaterial({ vertexColors: true });
+  m.onBeforeCompile = sh => {
+    sh.uniforms.facTex = { value: facadeTex };
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec3 fac;\nvarying vec3 vFac;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFac = fac;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform sampler2D facTex;\nvarying vec3 vFac;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+      if (vFac.z > 0.5) {
+        vec2 raw = vec2(vFac.x / 3.4, vFac.y / 3.1);
+        float storey = floor(raw.y);
+        float row = storey < 0.5 ? (vFac.z > 1.5 ? 1.0 : 0.0) : 2.0;   // fac.z: 1 = shop front, 2 = house front
+        vec2 uv = vec2(fract(raw.x), (row + fract(raw.y)) / 3.0);
+        vec3 t = textureGrad(facTex, uv, dFdx(raw) * vec2(1.0, 1.0 / 3.0), dFdy(raw) * vec2(1.0, 1.0 / 3.0)).rgb;
+        diffuseColor.rgb *= t;
+      }`);
+  };
+  return m;
+}
+const MAT_FAC = facadeMaterial();
+
+// ---------------------------------------------------------------- buildings, streamed per chunk
+// Chunks are grouped at load (cheap) and their geometry is built only when the player approaches,
+// earlier in the direction of travel. HOOKS.replacesBuilding(b) lets detailed landmark models remove generic ones.
+const BCH = { map: new Map(), built: 0, tris: 0 };
+function groupBuildings() {
+  for (const b of W.buildings) {
+    const k = Math.floor(b.c.x / CHUNK) + ':' + Math.floor(b.c.z / CHUNK);
+    let c = BCH.map.get(k); if (!c) BCH.map.set(k, c = { list: [], bb: [Infinity, Infinity, -Infinity, -Infinity], mesh: null, cx: 0, cz: 0 });
+    c.list.push(b); c.bb[0] = Math.min(c.bb[0], b.bb[0]); c.bb[1] = Math.min(c.bb[1], b.bb[1]); c.bb[2] = Math.max(c.bb[2], b.bb[2]); c.bb[3] = Math.max(c.bb[3], b.bb[3]);
+  }
+  for (const c of BCH.map.values()) { c.cx = (c.bb[0] + c.bb[2]) / 2; c.cz = (c.bb[1] + c.bb[3]) / 2; }
+}
+function buildBuildingChunk(c) {
+  const gb = new GB(), skip = HOOKS.replacesBuilding;
+  for (const b of c.list) {
+    if (skip && skip(b)) continue;
+    const hsh = b.id ? strHash(b.id) : (Math.imul(Math.round(b.c.x * 10), 73856093) ^ Math.imul(Math.round(b.c.z * 10), 19349663)) >>> 0;
+    let wall = col(WALLS[hsh % WALLS.length]);
+    if (b.k === 'church') wall = col('#efe7d6');
+    if (b.k === 'industrial' || b.k === 'warehouse' || b.k === 'roof' || b.k === 'shed' || b.k === 'farm') wall = col(['#b8b6ae', '#c9c4b6', '#a9b0b3'][hsh % 3]);
+    if (b.k === 'greenhouse') wall = col('#d8e6dc');
+    const h = b.h, y0 = KERB - 0.02;
+    const plain = b.k === 'roof' || b.k === 'greenhouse' || b.k === 'industrial' || b.k === 'shed' || b.k === 'farm';
+    // shop fronts: cadastre "Comercial", or houses in the commercial centre (many ground floors are shops), else a house front
+    const dC = Math.hypot(b.c.x, b.c.z);
+    const shop = b.k === 'commercial' || b.k === 'retail' || b.k === 'yes' && dC < 900 || (b.k === 'house' && dC < 700 && (hsh >>> 4) % 100 < 50);
+    const facade = !plain && h > 2.6 ? (shop ? 1 : 2) : false;
+    if (b.k === 'roof') {         // open shed: roof only on thin posts (approximate)
+      gb.cap(b.P, null, h, ROOF_FLAT); gb.cap(b.P, null, h - 0.15, shade(ROOF_FLAT, 0.6), true); continue;
+    }
+    const a = Math.abs(signedArea(b.P));
+    const parapet = b.st > 1 && a > 50 ? 0.6 : 0;
+    gb.walls(b.P, y0, h + parapet, wall, facade);
+    const tile = b.st <= 2 && a < 400 && (hsh >>> 8) % 100 < 45;
+    const roofC = b.k === 'shed' || b.k === 'farm' ? col(['#8d969a', '#a3a7a1', '#9a6d55'][hsh % 3]) : tile ? ROOF_TILE : a > 900 ? ROOF_DARK : ROOF_FLAT;
+    gb.cap(b.P, null, tile ? h + parapet : h, shade(roofC, 0.92 + 0.16 * hash(hsh)));
+  }
+  c.mesh = addMesh(gb.build(), MAT_FAC); BCH.built++; BCH.tris += gb.count;
+}
+// build what's near (and ahead); hide what's far. budget = chunks built per call
+function streamBuildings(x, z, vx = 0, vz = 0, budget = 2) {
+  const R = drawRange(), ax = x + vx * 4, az = z + vz * 4;
+  const todo = [];
+  for (const c of BCH.map.values()) {
+    const d = Math.min(bboxDist(c.bb, x, z), bboxDist(c.bb, ax, az));
+    if (c.mesh) c.mesh.visible = d < R;
+    else if (d < R) todo.push([d, c]);
+  }
+  if (todo.length) { todo.sort((p, q) => p[0] - q[0]); for (let i = 0; i < Math.min(budget, todo.length); i++) buildBuildingChunk(todo[i][1]); }
+  return todo.length;
+}
+function buildBuildings() { groupBuildings(); return 0; }
+
 
 // ===== 12_street.js
 // Street detail (12_street): utility poles + sagging cables, transformers, cobra-head lamps, street-name plates,
@@ -2339,6 +2304,52 @@ function buildWorld() {
     if (ST.t <= 0) { ST.t = 0.35; schedule(ctx.px, ctx.pz); }
     work(lvl().budget);
   };
+}
+
+// ===== 13_vegetation.js
+// Vegetation: trees and palms (OSM trees + plantings inside documented parks).
+
+// ---------------------------------------------------------------- vegetation (OSM trees; park trees placed inside documented park areas)
+function buildTrees() {
+  const trees = [], palms = [];
+  for (const [e, n] of D.trees) trees.push({ x: e / 10, z: -n / 10, s: 0.8 + hash(e) * 0.5 });
+  const park = (W.landmarks.park || [])[0];
+  rngState = 777;
+  for (const p of D.parks) {
+    const P = ptsOf(p.p), bb = bboxOf(P), a = Math.abs(signedArea(P));
+    const isBolivar = park && pointInPoly(centroid(P).x, centroid(P).z, park.P);
+    if (isBolivar && typeof DETAILED_LANDMARKS !== 'undefined' && DETAILED_LANDMARKS.has('park_bolivar')) continue;   // real planting from 15_landmarks
+    const n = Math.min(isBolivar ? 34 : 60, Math.floor(a / (p.k === 'pitch' ? 1e9 : 170)));
+    for (let i = 0, tries = 0; i < n && tries < n * 8; tries++) {
+      const x = lerp(bb[0], bb[2], rand()), z = lerp(bb[1], bb[3], rand());
+      if (!pointInPoly(x, z, P)) continue;
+      if (isBolivar) {
+        const o = obb(park.P), dx = x - o.cx, dz = z - o.cz;
+        if (Math.hypot(dx, dz) < 15) continue;
+        palms.push({ x, z, s: 0.85 + rand() * 0.35 });
+      } else trees.push({ x, z, s: 0.7 + rand() * 0.7 });
+      i++;
+    }
+  }
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), pos = new THREE.Vector3();
+  // broad tree (samán-like crown)
+  const tg = new GB(); { const t = new THREE.CylinderGeometry(0.25, 0.4, 4, 6); t.translate(0, 2, 0); mergeInto(tg, t, col('#6b5a45')); const c = new THREE.IcosahedronGeometry(3.6, IS_TOUCH ? 0 : 1); c.scale(1.35, 0.7, 1.35); c.translate(0, 5.6, 0); mergeInto(tg, c, col('#4d7a35')); }
+  const pg = new GB(); { const t = new THREE.CylinderGeometry(0.18, 0.28, 11, 6); t.translate(0, 5.5, 0); mergeInto(pg, t, col('#8b7f6b'));
+    for (let k = 0; k < 8; k++) { const f = new THREE.BoxGeometry(4.2, 0.08, 0.7); f.translate(2.1, 0, 0); f.rotateZ(-0.45); f.rotateY(k / 8 * TAU); f.translate(0, 11, 0); mergeInto(pg, f, col('#4f8a3a')); } }
+  const mk = (g, list) => {   // one InstancedMesh per chunk so far districts can be hidden
+    if (!list.length) return;
+    const geo = g.build(), groups = new Map();
+    list.forEach((t, i) => { const k = Math.floor(t.x / CHUNK) + ':' + Math.floor(t.z / CHUNK); (groups.get(k) || groups.set(k, []).get(k)).push([t, i]); });
+    for (const items of groups.values()) {
+      const im = new THREE.InstancedMesh(geo, MAT_V, items.length), bb = [Infinity, Infinity, -Infinity, -Infinity];
+      items.forEach(([t, i], j) => { pos.set(t.x, KERB, t.z); q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), hash(i * 13) * TAU); sc.set(t.s, t.s, t.s); m4.compose(pos, q, sc); im.setMatrixAt(j, m4); bb[0] = Math.min(bb[0], t.x - 6); bb[1] = Math.min(bb[1], t.z - 6); bb[2] = Math.max(bb[2], t.x + 6); bb[3] = Math.max(bb[3], t.z + 6); });
+      im.castShadow = QL.shadow > 0; im.computeBoundingSphere(); scene.add(im); registerChunkMesh(im, bb);
+    }
+  };
+  mk(tg, trees); mk(pg, palms);
+  // tree trunks as obstacles
+  for (const t of trees.concat(palms)) { const b = { P: circlePoly(t.x, t.z, 0.45, 6), h: 4, k: 'tree', id: 't', bb: [t.x - 0.5, t.z - 0.5, t.x + 0.5, t.z + 0.5], c: { x: t.x, z: t.z } }; bGrid.insertBox(b, ...b.bb); }
+  return trees.length + palms.length;
 }
 
 // ===== 15_landmarks.js
@@ -6432,7 +6443,7 @@ function initMissions() {
       ] },
     { id: 'vuelta', title: 'Vuelta al Centro', giver: 'Kevin', at: PLACES.parque, reward: 20000, needs: 'servicio', race: true,
       blurb: 'Contrarreloj por las calles del centro. Respeta los puntos de control; el tráfico no se detiene.',
-      checkpoints: [['Calle 30', 'Carrera 24'], ['Calle 27', 'Carrera 24'], ['Calle 27', 'Carrera 33'], ['Calle 33', 'Carrera 33'], ['Calle 33', 'Carrera 28'], ['Calle 31', 'Carrera 29']] },
+      checkpoints: [['Calle 31', 'Carrera 24'], ['Calle 27', 'Carrera 24'], ['Calle 27', 'Carrera 33'], ['Calle 33', 'Carrera 33'], ['Calle 33', 'Carrera 28'], ['Calle 31', 'Carrera 29']] },
   ];
   for (const d of MISSIONS.defs) {
     if (!d.at) continue;
@@ -6477,7 +6488,8 @@ function endMission() {
   hideTalk(3);
 }
 function completeMission() {
-  const d = MISSIONS.active; let pay = Math.round(d.reward * MISSIONS.payK / 100) * 100;
+  const d = MISSIONS.active, replay = !!SAVE.done[d.id];
+  let pay = Math.round(d.reward * MISSIONS.payK * (replay ? 0.35 : 1) / 100) * 100;   // replays pay a fraction
   if (d.race) {
     const t = MISSIONS.raceT, prev = MISSIONS.best[d.id];
     if (!prev || t < prev) { MISSIONS.best[d.id] = t; try { localStorage.setItem('palmira-best', JSON.stringify(MISSIONS.best)); } catch (e) { } }
@@ -6579,7 +6591,7 @@ function missionHud() {
 function onBusted() {
   const fine = Math.min(SAVE.money, 50000);
   SAVE.money -= fine; PURSUIT.clear();
-  if (MISSIONS.active) endMission();
+  if (MISSIONS.active) failMission('Te detuvo la Patrulla Urbana.');
   toast('Detenido', 'Multa de ' + fmtMoney(fine) + '. La Patrulla Urbana te dejó ir con una advertencia.');
   persist();
 }
@@ -6592,7 +6604,7 @@ function initDealer() {
   const m = makeMarker('#3a8bd8'); m.position.set(PLACES.dealer.x, 0, PLACES.dealer.z); m.visible = true; DEALER.marker = m;
   // showroom cars on the forecourt
   const s = sidewalkSpot(PLACES.dealer.x, PLACES.dealer.z);
-  [['valerio', '#c41e1e', -5], ['furia', '#f2c21b', 1.5]].forEach(([t, c2, off]) => { const v = makeVehicleMesh(t, c2), f = fwdOf(s.a); v.position.set(s.x - f.x * 3 + -f.z * off, KERB, s.z - f.z * 3 + f.x * off); v.rotation.y = s.a + Math.PI / 2; scene.add(v); });
+  [['valerio', '#c41e1e', -5], ['furia', '#f2c21b', 1.5]].forEach(([t, c2, off]) => { const v = makeVehicleMesh(t, c2), f = fwdOf(s.a); let x = s.x - f.x * 3 + -f.z * off, z = s.z - f.z * 3 + f.x * off; for (let k = 0; k < 8; k++) { const h = collideCircle(x, z, 1.1); if (!h) break; x += h.x; z += h.z; } v.position.set(x, KERB, z);   /* QA: the Furia stood inside the shop footprint */ v.rotation.y = s.a + Math.PI / 2; scene.add(v); });
 }
 function updateDealer(dt, ctx) {
   if (!PLACES.dealer) return;
@@ -6700,6 +6712,16 @@ function fwdOf(a) { return { x: Math.cos(a), z: -Math.sin(a) }; }
 function placeObj(obj, x, z, a, y = KERB) { obj.position.set(x, y, z); obj.rotation.y = a; }
 function meshOf(geo, mat = MAT_V) { const m = new THREE.Mesh(geo, mat); m.castShadow = QL.shadow > 0; return m; }
 function localOff(spot, fwd, side) { const f = fwdOf(spot.a); return { x: spot.x + f.x * fwd + (-f.z) * side, z: spot.z + f.z * fwd + f.x * side }; }
+function interiorPoint(P) {   // point inside polygon P farthest from its edges (coarse grid); falls back to the centroid
+  const c = centroid(P); if (pointInPoly(c.x, c.z, P) && P.every((p, k) => { const q = P[(k + 1) % P.length], h = segClosest(c.x, c.z, p.x, p.z, q.x, q.z); return Math.hypot(h.x - c.x, h.z - c.z) > 8; })) return c;
+  const [x0, z0, x1, z1] = bboxOf(P); let best = c, bd = -1;
+  for (let i = 1; i < 12; i++) for (let j = 1; j < 12; j++) {
+    const x = x0 + (x1 - x0) * i / 12, z = z0 + (z1 - z0) * j / 12; if (!pointInPoly(x, z, P)) continue;
+    let d = Infinity; for (let k = 0; k < P.length; k++) { const p = P[k], q = P[(k + 1) % P.length], h = segClosest(x, z, p.x, p.z, q.x, q.z); d = Math.min(d, Math.hypot(h.x - x, h.z - z)); }
+    if (d > bd) { bd = d; best = { x, z }; }
+  }
+  return best;
+}
 
 // ---------------------------------------------------------------- NPC registry
 const NPCS = { list: [], inv: [], viralT: 0, dogTrust: 0 };
@@ -6711,9 +6733,11 @@ class Npc {
     NPCS.list.push(this);
   }
   say(text, dur = 4) { drawBubble(this.bubble, text); this.bubble.sp.visible = true; this.bubbleT = dur; }
-  nextLine(list = this.lines) {   // rotate without immediate repeats
-    if (!this._order || this._order.length === 0) { this._order = list.map((_, i) => i).sort(() => Math.random() - 0.5); if (this._last === this._order[0]) this._order.push(this._order.shift()); }
-    const i = this._order.shift(); this._last = i; return list[i];
+  nextLine(list = this.lines) {   // rotate without immediate repeats; one rotation per list (QA: a shared order mixed up lines/ambient → undefined text crash)
+    if (!list || !list.length) return '';
+    this._ord = this._ord || new WeakMap(); let st = this._ord.get(list); if (!st) this._ord.set(list, st = { o: [], last: -1 });
+    if (!st.o.length) { st.o = list.map((_, i) => i).sort(() => Math.random() - 0.5); if (st.last === st.o[0]) st.o.push(st.o.shift()); }
+    const i = st.o.shift(); st.last = i; if (list === this.lines) this._last = i; return list[i];
   }
   baseUpdate(dt, ctx) {
     const d = Math.hypot(this.x - ctx.px, this.z - ctx.pz);
@@ -6777,7 +6801,7 @@ function initNpcs() {
   // 12. Salsa couple practising in Parque Bolívar
   {
     const c = park ? { x: park.c.x + 9, z: park.c.z + 9 } : { x: 0, z: 0 };
-    const n = new Npc({ id: 'salsa', name: 'Yamileth y Fredy (salsa)', x: c.x, z: c.z, a: 0, y: KERB + 0.06,
+    const n = new Npc({ id: 'salsa', name: 'Yamileth y Fredy (salsa)', x: c.x, z: c.z, a: 0, y: KERB + 0.06, nudge: 1.2,
       lines: ['El sábado hay rumba, venga y aprende.', '¡Pero no me lleve la contraria con los pies!', 'Fue usted el que perdió el ritmo, no yo.', 'En Palmira se baila desde chiquito.'],
       ambient: ['¡Uno, dos, tres… cinco, seis, siete!', '¡Fredy, ese no es el paso!', '¡Pero no me lleve la contraria con los pies!', 'Yo voy bien, es la música la que va rápido.'], ambientEvery: 8 });
     n.a1 = addPerson(n, { shirt: '#c8302b', skirt: '#c8302b', skin: '#8a5a3c', hair: '#1a1210' }, 0.45, 0, 0);
@@ -6788,7 +6812,7 @@ function initNpcs() {
   // 16. Content creator filming in the park
   {
     const c = park ? { x: park.c.x - 14, z: park.c.z + 4 } : { x: 0, z: 0 };
-    new Npc({ id: 'creadora', name: 'Valen (creadora de contenido)', x: c.x, z: c.z, a: 0.6, y: KERB + 0.06,
+    new Npc({ id: 'creadora', name: 'Valen (creadora de contenido)', x: c.x, z: c.z, a: 0.6, y: KERB + 0.06, nudge: 0.6,
       lines: ['Estoy grabando el raspao más bonito de Palmira.', 'Si hace algo loco, que sea detrás de mí, por favor.', 'Ya voy en tres mil seguidores. Bueno, dos mil novecientos.'],
       ambient: ['Holaaa, mis valientes, hoy estamos en el Parque Bolívar…', 'Miren esta luz, ¡qué cosa tan bonita!', 'Denle like y compartan, ¿sí?'], ambientEvery: 10 });
     addPerson(NPCS.list.at(-1), { shirt: '#7c5ba6', phone: true, skirt: '#2c2f33', skin: '#c4926d', hair: '#3b2416' });
@@ -6917,7 +6941,7 @@ function initNpcs() {
   {
     const parks = D.parks.map(p => ({ P: ptsOf(p.p), k: p.k })).filter(p => Math.abs(signedArea(p.P)) > 900 && !(park && pointInPoly(centroid(p.P).x, centroid(p.P).z, park.P)));
     parks.sort((a, b) => Math.hypot(centroid(a.P).x - P0.x, centroid(a.P).z - P0.z) - Math.hypot(centroid(b.P).x - P0.x, centroid(b.P).z - P0.z));
-    const pk = parks[0], c = pk ? centroid(pk.P) : { x: P0.x + 200, z: P0.z };
+    const pk = parks[0], c = pk ? interiorPoint(pk.P) : { x: P0.x + 200, z: P0.z };   // QA: centroid of a concave park fell inside a house
     const n = new Npc({ id: 'futbol', name: 'Los pelaos del partido', x: c.x, z: c.z, a: 0, y: KERB + 0.03, r: 6, visibleR: 180,
       lines: ['¡Gol! ¡Fue gol! ¡Pegó en la chancla, fue gol!', 'Juegue con nosotros, pero usted va de arquero.', 'El domingo hacemos torneo. Falta quien pite.'],
       ambient: ['¡Pásela, pásela!', '¡Carro! ¡Paren, paren!', '¡Fue mano!', '¡Gol!'], ambientEvery: 6, prompt: 'Hablar con los niños',
@@ -7024,7 +7048,7 @@ function initNpcs() {
       if (this.hidden) { this.group.visible = false; return; }
       const car = G.car;
       if (this.state === 'guide') { const tgt = { x: car.x + Math.sin(car.a) * 3, z: car.z + Math.cos(car.a) * 3 }; this.x = lerp(this.x, tgt.x, 1 - Math.exp(-2 * dt)); this.z = lerp(this.z, tgt.z, 1 - Math.exp(-2 * dt)); this.a = Math.atan2(-(car.z - this.z), car.x - this.x); this.y = groundAt(this.x, this.z); }
-      if (G.inCar && this.state === 'guide' && this.since > 15 && Math.hypot(car.x - this.x, car.z - this.z) < 10) { this.state = 'done'; const tip = 1000; if (SAVE.money >= tip) { SAVE.money -= tip; } this.say('¡Que le vaya bien! Gracias por la colaboración.', 3); toast('Le diste $1.000 al cuidador', ''); setTimeout(() => { this.hidden = true; }, 4000); }
+      if (G.inCar && this.state === 'guide' && this.since > 15 && Math.hypot(car.x - this.x, car.z - this.z) < 10) { this.state = 'done'; const tip = 1000, paid = SAVE.money >= tip; if (paid) { SAVE.money -= tip; persist(); } this.say(paid ? '¡Que le vaya bien! Gracias por la colaboración.' : 'Tranquilo, otro día me colabora.', 3); if (paid) toast('Le diste $1.000 al cuidador', ''); setTimeout(() => { this.hidden = true; }, 4000); }
       if (G.inCar && this.state === 'guide' && this.since <= 15 && car.speed > 3) { this.hidden = true; }
       this.since = (this.since || 0) + dt;
     };
@@ -7114,6 +7138,7 @@ function addNpcMissions() {
 function updateNpcs(dt, ctx) {
   let best = null, bd = Infinity;
   for (const n of NPCS.list) {
+    if (n.nudge) { for (let k = 0; k < 12; k++) { const h = collideCircle(n.x, n.z, n.nudge); if (!h) break; n.x += h.x * 1.05; n.z += h.z * 1.05; } n.nudge = 0; }   // QA: park NPCs stood inside the Bolívar statue pedestal
     if (n.hidden) { n.update && n.update(dt, ctx); n.group.visible = false; continue; }
     // walkers follow their sidewalk ring with stops
     if (n.ring && n.walk) {
@@ -7127,7 +7152,7 @@ function updateNpcs(dt, ctx) {
     if (usable && n.use && d < bd) { bd = d; best = n; }
   }
   if (NPCS.offerT > 0) { NPCS.offerT -= dt; if (NPCS.offer) { showPrompt(`<kbd>${IS_TOUCH ? 'Usar' : 'E'}</kbd> Aceptar: ${NPCS.offer.title}`); if (pressed.has('use')) { pressed.delete('use'); startMission(NPCS.offer); NPCS.offer = null; NPCS.offerT = 0; } return; } }
-  if (best && !promptShown) {
+  if (best && !promptShown && !(ctx.nearCar && bd > 1.2)) {   // standing at your own car door: E gets in
     showPrompt(`<kbd>${IS_TOUCH ? 'Usar' : 'E'}</kbd> ${best.prompt} · ${best.name}`);
     if (pressed.has('use')) { pressed.delete('use'); best.use(); }
   }
@@ -9332,7 +9357,7 @@ function boot() {
   console.info('Palmira boot', Math.round(performance.now() - t0) + 'ms', stats, 'buildings', W.buildings.length, 'edges', W.edges.length);
   $('loading').hidden = true;
   updateHud(0.3); drawMinimap();
-  window.PALMIRA = { HOOKS, NPCS, PLACES, G, CAM, camera, W, TRAFFIC, PEDS, PURSUIT, MISSIONS, renderer, scene, SAVE, tick: (n = 60, ms = 16.7) => { for (let i = 0; i < n; i++) { stepping = true; loop(last + ms); } stepping = false; } };
+  window.PALMIRA = { HOOKS, NPCS, PLACES, G, CAM, camera, W, TRAFFIC, PEDS, PURSUIT, MISSIONS, renderer, scene, SAVE, get CB() { return typeof CB !== 'undefined' ? CB : null; }, dbg: { takeVehicle, toggleCar, carjack, savePosition, resetToStart, VTYPES, PlayerCar, playerDown, onBusted, openTaller, openDealer, failMission, get PLAYER() { return PLAYER; } }, tick: (n = 60, ms = 16.7) => { try { for (let i = 0; i < n; i++) { stepping = true; loop(last + ms); } } finally { stepping = false; } } };
   titleMenu();
   addEventListener('keydown', e => { if (e.key === '`' || e.key === 'F3') { perf.on = !perf.on; if (!perf.el) { perf.el = document.createElement('div'); perf.el.className = 'hud panel'; perf.el.style.cssText = 'left:12px;top:50%;padding:8px 10px;font:12px/1.4 ui-monospace,monospace;white-space:pre'; document.body.appendChild(perf.el); } perf.el.hidden = !perf.on; } });
   addEventListener('pagehide', savePosition);
@@ -9342,6 +9367,8 @@ function boot() {
 
 let last = 0;
 let stepping = false;
+const _errOnce = new Set();
+function safe(name, fn) { try { fn(); } catch (e) { if (!_errOnce.has(name)) { _errOnce.add(name); console.error(name, e); } } }   // one failing system must not freeze the frame
 function loop(now) {
   if (!stepping) requestAnimationFrame(loop);
   let dt = clamp((now - last) / 1000, 0, 0.05); last = Math.max(last, now);   // never negative (clock skew / test stepping)
@@ -9361,14 +9388,14 @@ function loop(now) {
   if (!G.inCar) w.update(dt, input, camForwardYaw());
   const me = G.inCar ? car : w;
   const camDir = { x: Math.cos(camForwardYaw()), z: -Math.sin(camForwardYaw()) };
-  const ctx = { px: me.x, pz: me.z, car, walker: G.inCar ? null : w, camDir, speed: G.inCar ? car.speed : w.speed * 0.3 };
+  const ctx = { px: me.x, pz: me.z, car, walker: G.inCar ? null : w, camDir, speed: G.inCar ? car.speed : w.speed * 0.3, nearCar: !G.inCar && Math.hypot(w.x - car.x, w.z - car.z) < 3.2 };
   const hit = collideTraffic(car); if (hit > 3) AUDIO.crash(hit);
-  updateTraffic(dt, ctx);
-  updatePeds(dt, ctx);
-  updatePursuit(dt, ctx);
-  updateMissions(dt, ctx);
-  updateDealer(dt, ctx);
-  updateNpcs(dt, ctx);
+  safe('updateTraffic', () => updateTraffic(dt, ctx));
+  safe('updatePeds', () => updatePeds(dt, ctx));
+  safe('updatePursuit', () => updatePursuit(dt, ctx));
+  safe('updateMissions', () => updateMissions(dt, ctx));
+  safe('updateDealer', () => updateDealer(dt, ctx));
+  safe('updateNpcs', () => updateNpcs(dt, ctx));
   for (const f of ['updateStreet', 'updateAtmosphere', 'updateCombat']) { const fn = HOOKS[f]; if (fn) try { fn(dt, ctx); } catch (e) { console.error(f, e); HOOKS[f] = null; } }
   for (const pc of G.parked) pc.update(dt, input);
   // enter / exit / steal / talk
