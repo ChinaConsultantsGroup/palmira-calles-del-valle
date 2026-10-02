@@ -4550,6 +4550,7 @@ class PlayerCar {
     if (hand && Math.abs(vF) > 4) { if (this.two) { gripT = 3.6; yawT *= 1 + 0.15 * H.drift; } else { gripT = 1.4; yawT *= 1 + 0.4 * H.drift; } }   // two-wheelers: rear-brake slide, not a spin
     else if (H.over > 0 && thr > 0.6 && vF > 6 && vF < maxV * 0.85 && Math.abs(this.steer) > 0.04) { const k = H.over * thr * Math.min(1, Math.abs(this.steer) * 5); gripT *= 1 - k * 0.75; yawT *= 1 + k * 0.5; }
     if (this.burn) gripT *= 0.4;
+    if ((!hand || this.two) && Math.abs(vF) > 8) { const cap = (t.p.g + up.agarre * 1.4) * 2.2 / Math.abs(vF); yawT = clamp(yawT, -cap, cap); }   // arcade grip limit (~2 g): no twitchy spins at speed
     this.grip = lerp(this.grip, gripT, 1 - Math.exp(-(gripT > this.grip ? 2.4 : 14) * dt));
     if (!air) this.yawRate = lerp(this.yawRate, yawT, 1 - Math.exp(-(9 / H.inertia) * dt));
     else this.yawRate *= Math.exp(-0.5 * dt);
@@ -8430,7 +8431,7 @@ const AUDIO = (() => {
       const f = 38 + rpm * 120;
       engine.frequency.setTargetAtTime(f, t, 0.05); eng2.frequency.setTargetAtTime(f * 0.5, t, 0.05);
       engFilt.frequency.setTargetAtTime(380 + rpm * 1400 + s.throttle * 500, t, 0.08);
-      const pedal = typeof G !== 'undefined' && G.car && G.car.t.bici;   // bicycles have no engine
+      const pedal = typeof G !== 'undefined' && G.car && (G.car.t.bici || G.car.dead);   // bicycles have no engine; a wrecked engine is silent
       engGain.gain.setTargetAtTime(s.inCar && !pedal ? 0.05 + s.throttle * 0.05 + rpm * 0.03 : 0, t, 0.1);
       tyreGain.gain.setTargetAtTime(s.inCar && s.slip > 2.5 && v > 5 ? Math.min(0.12, (s.slip - 2.5) * 0.03) : 0, t, 0.05);
       ambGain.gain.setTargetAtTime(0.045 + (s.inCar ? 0 : 0.03), t, 0.5);
@@ -9341,7 +9342,7 @@ let last = 0;
 let stepping = false;
 function loop(now) {
   if (!stepping) requestAnimationFrame(loop);
-  let dt = Math.min(0.05, (now - last) / 1000); last = now;
+  let dt = clamp((now - last) / 1000, 0, 0.05); last = Math.max(last, now);   // never negative (clock skew / test stepping)
   dt *= (HOOKS.timeScale ?? 1);   // slow motion on DETENIDO / HERIDO screens
   G.frame++;
   readInput();
