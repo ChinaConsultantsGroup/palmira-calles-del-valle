@@ -11,6 +11,7 @@ Juego de conducción en mundo abierto ambientado en la Palmira real (toda el ár
 | W A S D / flechas | Conducir o caminar |
 | Espacio | Freno de mano |
 | E | Subir/bajar, robar un vehículo, hablar, comprar, aceptar encargos |
+| F | Bajarse del vehículo |
 | H | Pito |
 | C | Cámara |
 | M | Mapa (toca un punto para marcar destino) |
