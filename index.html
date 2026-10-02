@@ -1149,8 +1149,8 @@ function buildLandmarks() {
     }
     LANDMARK_INFO.push({ n: 'Estadio Francisco Rivera Escobar', x: c.x, z: c.z, note: 'Graderías aproximadas' });
   }
-  // Parque Bolívar: diagonal paths, central statue of Bolívar (1947) on pedestal
-  if (park) {
+  // Parque Bolívar: diagonal paths, central statue of Bolívar (1947) on pedestal (skipped when 15_landmarks models the real layout)
+  if (park && !SKIP.has('park_bolivar')) {
     const o = obb(park.P), PAVE = col('#d7cdb6');
     const corner = (u, v) => ({ x: o.cx + o.ux * u * o.L / 2 - o.uz * v * o.Wd / 2, z: o.cz + o.uz * u * o.L / 2 + o.ux * v * o.Wd / 2 });
     ribbon(gb, [corner(-0.95, -0.95), corner(0.95, 0.95)], 3.2, KERB + 0.06, PAVE);
@@ -1273,6 +1273,7 @@ function buildTrees() {
   for (const p of D.parks) {
     const P = ptsOf(p.p), bb = bboxOf(P), a = Math.abs(signedArea(P));
     const isBolivar = park && pointInPoly(centroid(P).x, centroid(P).z, park.P);
+    if (isBolivar && typeof DETAILED_LANDMARKS !== 'undefined' && DETAILED_LANDMARKS.has('park_bolivar')) continue;   // real planting from 15_landmarks
     const n = Math.min(isBolivar ? 34 : 60, Math.floor(a / (p.k === 'pitch' ? 1e9 : 170)));
     for (let i = 0, tries = 0; i < n && tries < n * 8; tries++) {
       const x = lerp(bb[0], bb[2], rand()), z = lerp(bb[1], bb[3], rand());
@@ -2352,7 +2353,7 @@ function buildWorld() {
 //     proportions; every model says what is approximate.
 // Draw calls: one merged mesh per landmark (11 meshes, ~35k triangles). Stats are logged at boot (HOOKS.landmarkStats).
 
-const DETAILED_LANDMARKS = new Set(['cathedral', 'camp', 'church', 'market', 'stadium']);
+const DETAILED_LANDMARKS = new Set(['cathedral', 'camp', 'church', 'market', 'stadium', 'park_bolivar']);
 const LM_SELF_APPLY = true;
 
 {
@@ -2511,7 +2512,7 @@ const LM_SELF_APPLY = true;
     LANDMARK_INFO.push(Object.assign({ n, x, z, note }, extra || {}));
   }
   function solid(P, h, id) { const b = { P, h, st: Math.max(1, Math.round(h / 3.3)), s: 'lm', hs: 'est', k: 'landmark', id, bb: bboxOf(P), c: centroid(P) }; bGrid.insertBox(b, ...b.bb); return b; }
-  function heritage(P, n, id) { (W.landmarks.heritage = W.landmarks.heritage || []).push({ P, n, id, c: centroid(P), bb: bboxOf(P) }); }
+  function heritage(P, n, id) { const H = (W.landmarks.heritage = W.landmarks.heritage || []); if (H.some(h => h.id === id)) return; H.push({ P, n, id, c: centroid(P), bb: bboxOf(P) }); }
   function circleP(x, z, r, n) { const P = []; for (let i = 0; i < n; i++) { const a = i / n * TAU; P.push({ x: x + Math.sin(a) * r, z: z + Math.cos(a) * r }); } return P; }
   function rawBuilding(id) { for (const b of D.buildings) { const bid = Array.isArray(b) ? b[5] : b.id; if (bid === id) return ptsOf(Array.isArray(b) ? b[0] : b.p); } return null; }
   function insetConvex(P, d) {
@@ -3149,6 +3150,275 @@ const LM_SELF_APPLY = true;
     info('Universidad Nacional · Sede Palmira', c.x, c.z, 'Portería sobre la Cra 32 (foto 2004); posición estimada');
   }
 
+  // ============================================================ shared small-object helpers (round 2)
+  const _UP = new THREE.Vector3(0, 1, 0), _DV = new THREE.Vector3(), _Q = new THREE.Quaternion();
+  // cylinder between two points a, b ([x, yRel, z]); r0 at a, r1 at b
+  function tube(gb, a, b, r0, r1, seg, cl, open = false) {
+    _DV.set(b[0] - a[0], b[1] - a[1], b[2] - a[2]); const L = _DV.length(); if (L < 1e-4) return; _DV.divideScalar(L);
+    const g = new THREE.CylinderGeometry(r1, r0, L, seg, 1, open); g.translate(0, L / 2, 0); g.applyQuaternion(_Q.setFromUnitVectors(_UP, _DV)); g.translate(a[0], G0 + a[1], a[2]); geo(gb, g, cl);
+  }
+  function blob(gb, x, y, z, r, sx, sy, sz, cl, detail = 0) { const g = new THREE.IcosahedronGeometry(r, detail); g.scale(sx, sy, sz); g.translate(x, G0 + y, z); geo(gb, g, cl); }
+  function poiAt(name) { const p = (D.pois || []).find(q => q.n === name); return p ? EN(p.x / 10, p.y / 10) : null; }
+  function inArea(p, m = 5) { const a = D.meta && D.meta.area; return !a || (p.x > a[0] + m && p.x < a[2] - m && -p.z > a[1] + m && -p.z < a[3] - m); }
+  // object frame at p: U faces the nearest street (or +x), V to its right; the point is pushed off the carriageway
+  function objFrame(gb, p, clear = 2.5) {
+    let q = { x: p.x, z: p.z }, U = { x: 1, z: 0 };
+    const ne = nearestEdge(q.x, q.z, 40);
+    if (ne) {
+      let dx = q.x - ne.x, dz = q.z - ne.z, d = Math.hypot(dx, dz);
+      if (d < 1e-3) { const t = edgePoint(ne.e, ne.s); dx = -t.dz; dz = t.dx; d = 1; }
+      const need = ne.e.w / 2 + clear; if (d < need) { q = { x: ne.x + dx / d * need, z: ne.z + dz / d * need }; }
+      U = unit(-dx, -dz);
+    }
+    return new Frame(gb, q, U, { x: -U.z, z: U.x });
+  }
+  const BRONZE = col('#4b4a3e'), STONEP = col('#d8d1c1'), CONC = col('#a9a59c');
+  // stylised standing figure (local frame: u forward, v right), feet at y0, height H
+  function figure(fr, u, v, y0, H, cl, kind = 'man') {
+    const gb = fr.gb, W = (a, b, y) => fr.W(u + a * H, y0 + y * H, v + b * H);
+    if (kind === 'virgin' || kind === 'robe') {
+      const p = fr.P(u, v); cone(gb, p.x, y0, p.z, 0.82 * H, 0.2 * H, 10, cl); ball(gb, p.x, y0 + 0.88 * H, p.z, 0.075 * H, cl);
+      if (kind === 'virgin') { cone(gb, p.x, y0 + 0.3 * H, p.z, 0.58 * H, 0.23 * H, 10, col('#5b7fb8')); cyl(gb, p.x, y0 + 0.97 * H, p.z, 0.02 * H, 0.11 * H, 0.11 * H, 12, col('#d9b44a'), true); }
+      return;
+    }
+    tube(gb, W(0, -0.055, 0), W(0, -0.05, 0.48), 0.05 * H, 0.06 * H, 6, cl); tube(gb, W(kind === 'stride' ? 0.08 : 0, 0.055, 0), W(0, 0.05, 0.48), 0.05 * H, 0.06 * H, 6, cl);
+    tube(gb, W(0, 0, 0.46), W(0, 0, 0.8), 0.1 * H, 0.12 * H, 8, cl);
+    ball(gb, W(0, 0, 0)[0], y0 + 0.87 * H, W(0, 0, 0)[2], 0.07 * H, cl);
+    if (kind === 'bolivar') {   // cape, raised right arm with sword pointing down, bicorne hat
+      const b = fr.P(u - 0.06 * H, v); cone(gb, b.x, y0 + 0.28 * H, b.z, 0.52 * H, 0.17 * H, 10, cl);
+      tube(gb, W(0, 0.13, 0.78), W(0.18, 0.2, 0.6), 0.035 * H, 0.03 * H, 6, cl); tube(gb, W(0.18, 0.2, 0.6), W(0.22, 0.22, 0.2), 0.012 * H, 0.008 * H, 4, cl);
+      tube(gb, W(0, -0.13, 0.78), W(0.1, -0.16, 0.55), 0.035 * H, 0.03 * H, 6, cl);
+      const h = W(0, 0, 0.93); gb.box(h[0], h[1], h[2], 0.09 * H, 0.05 * H, 0.2 * H, cl, fr.rot);
+    } else if (kind === 'soldier') {
+      tube(gb, W(0, 0.13, 0.78), W(0.05, 0.15, 0.5), 0.035 * H, 0.03 * H, 6, cl); tube(gb, W(0, -0.13, 0.78), W(0.12, -0.12, 0.6), 0.035 * H, 0.03 * H, 6, cl);
+      tube(gb, W(0.1, 0.17, 0.3), W(0.06, 0.17, 1.02), 0.015 * H, 0.012 * H, 4, cl);   // rifle at the shoulder
+      const h = W(0, 0, 0.9); dome(gb, h[0], 0.9 * H + y0, h[2], 0.085 * H, 0.75, 8, 3, cl);
+    } else if (kind === 'shaman') {     // Malagana-style: arms out, flat crown disc
+      tube(gb, W(0, 0.12, 0.76), W(0.05, 0.38, 0.86), 0.035 * H, 0.03 * H, 6, cl); tube(gb, W(0, -0.12, 0.76), W(0.05, -0.38, 0.86), 0.035 * H, 0.03 * H, 6, cl);
+      const h = W(0.02, 0, 0.96); cyl(gb, h[0], 0.95 * H + y0, h[2], 0.02 * H, 0.2 * H, 0.2 * H, 12, cl);
+      const b = fr.P(u, v); cyl(gb, b.x, y0 + 0.4 * H, b.z, 0.1 * H, 0.17 * H, 0.15 * H, 10, cl);
+    } else {
+      tube(gb, W(0, 0.13, 0.78), W(0.02, 0.15, 0.48), 0.035 * H, 0.03 * H, 6, cl); tube(gb, W(0, -0.13, 0.78), W(0.15, -0.12, 0.62), 0.035 * H, 0.03 * H, 6, cl);
+    }
+  }
+  function plaque(fr, u, y, w, h, off = 0.03) { const F = fr.face('u', u, 1); F.rect(-w / 2, w / 2, y, y + h, off, col('#6b5a35')); }
+  function palm(gb, x, z, y0, h, k) {   // royal palm (Roystonea): grey trunk with white-painted base, green crownshaft, drooping fronds
+    cyl(gb, x, y0, z, h, 0.3, 0.22, 7, col('#b9b4a8'), true); cyl(gb, x, y0, z, 1.5, 0.33, 0.32, 7, col('#f1efe8'), true);
+    cyl(gb, x, y0 + h, z, 1.7, 0.25, 0.2, 7, col('#6e9a42'), true);
+    const n = HI ? 9 : 6;
+    for (let i = 0; i < n; i++) { const f = new THREE.BoxGeometry(3.8, 0.07, 0.75); f.translate(1.9, 0, 0); f.rotateZ(-0.25 - 0.35 * hash(k * 31 + i)); f.rotateY(i / n * TAU + k); f.translate(x, G0 + y0 + h + 1.6, z); geo(gb, f, col(i % 2 ? '#4f8a3a' : '#5a9440')); }
+  }
+  function saman(gb, x, z, y0, s, k) { cyl(gb, x, y0, z, 3.4 * s, 0.5 * s, 0.38 * s, 7, col('#6b5a45'), true); blob(gb, x, y0 + 5.6 * s, z, 4.2 * s, 1.5, 0.5, 1.5, col('#4d7a35'), 1); blob(gb, x + 2 * s * Math.cos(k), y0 + 6.4 * s, z + 2 * s * Math.sin(k), 3 * s, 1.3, 0.5, 1.3, col('#55843b'), 0); }
+
+  // ============================================================ 12. Parque Bolívar
+  // OSM: park outline (way 510234177), "Estatua Simón Bolívar" (node 4409663595, E 51.9 N 13.3) and the pond
+  // "Fuente de Agua" (way 551766642). OSM has NO footways inside the park, so the path pattern is ESTIMATED from the
+  // photos: paths from each corner and from each side to the statue plaza, a wide promenade west of the statue with
+  // the fountain, a perimeter walk, raised planters with light-blue low walls and black railings, tall royal palms
+  // with white-painted trunk bases plus a few samanes, white post lamps, concrete benches and flagpoles.
+  // Commons refs: "Parque Bolivar - panoramio.jpg" (CC BY 3.0 Yama2013), "Alcaldía Municipal de Palmira.jpg",
+  // "Catredal ... y Alcaldía Municipal de Palmira.jpg" (CC BY-SA 4.0 Estebanjosem0621), "Palmira Valle Del Cauca.jpg"
+  // (collage incl. aerial of the fountain, CC BY-SA 4.0 Dantiagok017). Statue gifted by the Club de Leones,
+  // 12 Oct 1947 (es.wikipedia); bronze standing Bolívar with cape on a stone pedestal (pose approximate).
+  const POND = [EN(31.8, 18.8), EN(42.3, 17.2), EN(40.7, 6.1), EN(30.1, 7.6)];
+  function buildParkBolivar(L, add) {
+    const gb = new GB(), P = L.P.slice(); if (signedArea(P) < 0) P.reverse();
+    const S = poiAt('Estatua Simón Bolívar') || EN(51.9, 13.3), r0 = 11.5, Pin = insetConvex(P, 3.6);
+    const PAVE = col('#b0806a'), PAVE2 = col('#d7ccb8'), BLUE = col('#7aa3d0'), GRN = col('#5f8f3c'), SHR = col('#3f6f2e'), RAIL = col('#26292b'), WHT = col('#f2f0ea');
+    const pol = (r, a) => ({ x: S.x + r * Math.cos(a), z: S.z + r * Math.sin(a) });
+    const hit = (dx, dz) => { let best = Infinity; for (let i = 0; i < Pin.length; i++) { const a = Pin[i], b = Pin[(i + 1) % Pin.length], ex = b.x - a.x, ez = b.z - a.z, den = dx * ez - dz * ex; if (Math.abs(den) < 1e-9) continue; const t = ((a.x - S.x) * ez - (a.z - S.z) * ex) / den, u = ((a.x - S.x) * dz - (a.z - S.z) * dx) / den; if (t > 0 && u >= -1e-6 && u <= 1 + 1e-6) best = Math.min(best, t); } return best; };
+    // paving over the whole park, lighter statue plaza
+    gb.cap(P, null, G0 + 0.07, PAVE);
+    { const ring = []; for (let i = 0; i < 28; i++) ring.push(pol(r0, i / 28 * TAU)); gb.cap(ring.slice().reverse(), null, G0 + 0.08, PAVE2); }
+    // rays: to the four park corners (diagonals) and along the street grid (N, E, S, W)
+    const gN = { x: Math.sin(GRID_ROT), z: -Math.cos(GRID_ROT) }, gE = { x: Math.cos(GRID_ROT), z: Math.sin(GRID_ROT) }, rays = [];
+    for (const [a, b] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) { let best = null, bs = -Infinity; for (const p of P) { const s = (p.x - S.x) * (a * gE.x + b * gN.x) + (p.z - S.z) * (a * gE.z + b * gN.z); if (s > bs) { bs = s; best = p; } } rays.push({ d: unit(best.x - S.x, best.z - S.z), hw: 1.9 }); }
+    const pc = centroid(POND), toPond = unit(pc.x - S.x, pc.z - S.z);
+    for (const d of [gN, gE, { x: -gN.x, z: -gN.z }, { x: -gE.x, z: -gE.z }]) rays.push({ d, hw: d.x * toPond.x + d.z * toPond.z > 0.9 ? 7.6 : 2.3 });
+    rays.forEach(r => { r.a = Math.atan2(r.d.z, r.d.x); }); rays.sort((p, q) => p.a - q.a);
+    for (const r of rays) { const R = hit(r.d.x, r.d.z); if (isFinite(R)) ribbon(gb, [pol(r0 - 0.5, r.a), pol(R, r.a)], 2 * r.hw - 0.6, G0 + 0.085, PAVE2); }
+    const lamps = [], solidsP = [];
+    let k = 0;
+    for (let i = 0; i < rays.length; i++) {
+      const A = rays[i], B = rays[(i + 1) % rays.length]; let aA = A.a, aB = B.a; if (aB <= aA) aB += TAU;
+      // inner corner: where the two path edges (offset lines) meet, if that lies outside the plaza; else an arc on the plaza
+      const nA = { x: -Math.sin(aA), z: Math.cos(aA) }, nB = { x: -Math.sin(aB), z: Math.cos(aB) }, dA = { x: Math.cos(aA), z: Math.sin(aA) }, dB = { x: Math.cos(aB), z: Math.sin(aB) };
+      const pA = { x: S.x + nA.x * A.hw, z: S.z + nA.z * A.hw }, pB = { x: S.x - nB.x * B.hw, z: S.z - nB.z * B.hw }, den = dA.x * dB.z - dA.z * dB.x;
+      const tX = Math.abs(den) > 1e-6 ? ((pB.x - pA.x) * dB.z - (pB.z - pA.z) * dB.x) / den : -1, X = { x: pA.x + dA.x * tX, z: pA.z + dA.z * tX }, sharp = tX > 0 && Math.hypot(X.x - S.x, X.z - S.z) > r0 + 0.8;
+      const sA = aA + Math.asin(Math.min(0.95, A.hw / (r0 + 0.8))), eB = aB - Math.asin(Math.min(0.95, B.hw / (r0 + 0.8))); if (!sharp && eB - sA < 0.08) continue;
+      const outer = (a0, hw, sg) => { let th = a0, r = 0; for (let it = 0; it < 5; it++) { r = hit(Math.cos(th), Math.sin(th)); if (!isFinite(r)) return null; th = a0 + sg * Math.asin(Math.min(0.95, hw / r)); } return { th, r }; };
+      const oA = outer(aA, A.hw, 1), oB = outer(aB, B.hw, -1); if (!oA || !oB || oB.th <= oA.th) continue;
+      const verts = Pin.map(p => { let a = Math.atan2(p.z - S.z, p.x - S.x); while (a < aA) a += TAU; while (a > aA + TAU) a -= TAU; return { p, a }; }).filter(q => q.a > oA.th + 1e-3 && q.a < oB.th - 1e-3).sort((p, q) => p.a - q.a);
+      const out = [pol(oA.r, oA.th), ...verts.map(q => ({ x: q.p.x, z: q.p.z })), pol(oB.r, oB.th)];
+      let Q;
+      if (sharp) Q = [X, ...out];
+      else { const inner = []; const ni = Math.max(2, Math.ceil((eB - sA) / 0.25)); for (let j = ni; j >= 0; j--) inner.push(pol(r0 + 0.8, sA + (eB - sA) * j / ni)); Q = [pol(r0 + 0.8, sA), ...out, ...inner.slice(0, -1)]; }
+      if (Math.abs(signedArea(Q)) < 12) continue;
+      gb.walls(Q, G0, G0 + 0.45, BLUE, false); gb.cap(Q, null, G0 + 0.45, GRN); solidsP.push(Q);
+      // black railing on the planter edge (posts + top rail)
+      for (let j = 0; j < Q.length; j++) { const a = Q[j], b = Q[(j + 1) % Q.length], l = Math.hypot(b.x - a.x, b.z - a.z); if (l < 0.3) continue; const rot = Math.atan2(b.z - a.z, b.x - a.x); gb.box((a.x + b.x) / 2, G0 + 1.08, (a.z + b.z) / 2, l, 0.05, 0.05, RAIL, rot); if (HI) for (let s = 0; s < l; s += 2.4) gb.box(a.x + (b.x - a.x) * s / l, G0 + 0.76, a.z + (b.z - a.z) * s / l, 0.05, 0.62, 0.05, RAIL, rot); }
+      // planting: shrubs, palms along the outer edge, a samán in large planters
+      const c = centroid(Q), area = Math.abs(signedArea(Q));
+      for (let j = 0; j < Math.min(8, area / 25); j++) { rngState = 1000 + i * 37 + j; for (let tries = 0; tries < 6; tries++) { const bb = bboxOf(Q), x = lerp(bb[0], bb[2], rand()), z = lerp(bb[1], bb[3], rand()); if (pointInPoly(x, z, Q)) { blob(gb, x, 0.9, z, 0.9 + rand() * 0.5, 1.2, 0.6, 1.2, SHR, 0); break; } } }
+      let acc = 3.5; for (let j = 0; j < out.length - 1; j++) { const a = out[j], b = out[j + 1], l = Math.hypot(b.x - a.x, b.z - a.z); for (; acc < l; acc += 6.8) { let x = a.x + (b.x - a.x) * acc / l, z = a.z + (b.z - a.z) * acc / l; const t = unit(c.x - x, c.z - z); x += t.x * 1.5; z += t.z * 1.5; if (!pointInPoly(x, z, Q)) continue; palm(gb, x, z, 0.45, 15 + 5 * hash(++k * 7), k); solid(circlePoly(x, z, 0.4, 6), 4, 'lm:park-palm'); } acc -= l; }
+      if (area > 260 && pointInPoly(c.x, c.z, Q)) { saman(gb, c.x, c.z, 0.45, 0.9 + 0.2 * hash(i), i); solid(circlePoly(c.x, c.z, 0.55, 6), 4, 'lm:park-saman'); }
+      // bench on the plaza side + lamps at the planter's inner corners
+      if (!sharp) {
+        const am = (sA + eB) / 2, bp = pol(r0 + 0.1, am), rot = am + Math.PI / 2; gb.box(bp.x, G0 + 0.42, bp.z, 1.9, 0.12, 0.45, CONC, rot); for (const s of [-0.7, 0.7]) gb.box(bp.x + Math.cos(rot) * s, G0 + 0.2, bp.z + Math.sin(rot) * s, 0.12, 0.4, 0.4, CONC, rot);
+        solid(circlePoly(bp.x, bp.z, 0.6, 6), 0.5, 'lm:park-bench');
+        for (const a of [sA, eB]) lamps.push(pol(r0 - 0.4, a));
+      } else { const t = unit(S.x - X.x, S.z - X.z); lamps.push({ x: X.x + t.x * 1.3, z: X.z + t.z * 1.3 }); }
+      lamps.push(out[Math.floor(out.length / 2)]);
+    }
+    for (const Q of solidsP) solid(Q, 0.45, 'lm:park-planter');
+    // white post lamps with two curved arms
+    for (const p of lamps) {
+      cyl(gb, p.x, 0.07, p.z, 5.2, 0.09, 0.07, 6, WHT, true);
+      for (const sg of [-1, 1]) { let x = p.x, y = 5.2, z = p.z; for (let s = 1; s <= 3; s++) { const a = s / 3 * Math.PI / 2, nx = p.x + sg * Math.sin(a) * 0.8, ny = 5.2 + (1 - Math.cos(a)) * 0.0 + Math.sin(a) * 0.5; tube(gb, [x, y, z], [nx, ny, p.z], 0.04, 0.04, 4, WHT); x = nx; y = ny; } ball(gb, x, y - 0.15, z, 0.2, col('#f6f3e2')); }
+      solid(circlePoly(p.x, p.z, 0.15, 5), 5, 'lm:park-lamp');
+    }
+    HOOKS.parkBolivarLamps = lamps.map(p => ({ x: p.x, y: KERB + 5.2, z: p.z }));
+    // fountain (OSM pond): blue-tiled basin, low white rim, central jets
+    { const Pp = POND.slice(); if (signedArea(Pp) < 0) Pp.reverse(); const In = insetConvex(Pp, 0.45);
+      gb.walls(Pp, G0, G0 + 0.6, WHT, false); gb.walls(In, G0 + 0.25, G0 + 0.6, col('#4f8fc4'), false, true); gb.cap(Pp, [In], G0 + 0.6, WHT); gb.cap(In, null, G0 + 0.32, col('#3d8cc9'));
+      const fc = centroid(Pp); cyl(gb, fc.x, 0.3, fc.z, 0.5, 1.2, 1.0, 12, WHT); for (let j = 0; j < 5; j++) { const a = j / 5 * TAU; tube(gb, [fc.x + Math.cos(a) * (j ? 2.6 : 0), 0.32, fc.z + Math.sin(a) * (j ? 2.6 : 0)], [fc.x + Math.cos(a) * (j ? 2.9 : 0), j ? 1.6 : 3.2, fc.z + Math.sin(a) * (j ? 2.9 : 0)], 0.12, 0.05, 5, col('#e8f2f8')); }
+      solid(Pp, 0.6, 'lm:park-fountain'); }
+    // statue of Bolívar on its pedestal (faces south, towards Calle 30 and the cathedral — orientation estimated)
+    { const U = { x: -gN.x, z: -gN.z }, fr = new Frame(gb, S, U, { x: -U.z, z: U.x });
+      fr.box(0, 0, 0.07, 7.0, 7.0, 0.35, STONEP); fr.box(0, 0, 0.42, 5.2, 5.2, 0.4, STONEP); fr.box(0, 0, 0.82, 3.0, 3.0, 0.5, shade(STONEP, 0.95));
+      fr.box(0, 0, 1.32, 2.3, 2.3, 3.4, STONEP); fr.box(0, 0, 4.72, 2.8, 2.8, 0.4, shade(STONEP, 0.96)); plaque(fr, 1.15, 2.2, 1.2, 0.8);
+      figure(fr, 0, 0, 5.12, 3.1, BRONZE, 'bolivar');
+      solid(fr.pts([[-3.5, -3.5], [3.5, -3.5], [3.5, 3.5], [-3.5, 3.5]]), 5, 'lm:park-statue');
+      // three flagpoles south-east of the statue, one with the Colombian flag
+      for (let j = 0; j < 3; j++) { const p = fr.P(5.5, 8.5 + j * 2.4); cyl(gb, p.x, 0.07, p.z, 11, 0.09, 0.05, 6, WHT, true); if (j === 1) { const F = new Face(gb, fr.P(5.5, 8.5 + j * 2.4 + 0.08), { x: fr.V.x, z: fr.V.z }, { x: fr.U.x, z: fr.U.z }); F.rect(0, 2.4, 9.4, 10.2, 0, col('#f4c400')); F.rect(0, 2.4, 9.0, 9.4, 0, col('#1f3f9a')); F.rect(0, 2.4, 8.6, 9.0, 0, col('#cf2a2a')); const Fb = new Face(gb, fr.P(5.5, 8.5 + j * 2.4 + 0.08), { x: fr.V.x, z: fr.V.z }, { x: -fr.U.x, z: -fr.U.z }); Fb.rect(0, 2.4, 9.4, 10.2, 0.01, col('#f4c400')); Fb.rect(0, 2.4, 9.0, 9.4, 0.01, col('#1f3f9a')); Fb.rect(0, 2.4, 8.6, 9.0, 0.01, col('#cf2a2a')); } } }
+    add(gb, 'park');
+    const o = obb(L.P);
+    info('Parque Bolívar', o.cx, o.cz, 'Contorno, estatua (1947) y fuente según OSM; senderos, jardineras, palmas y faroles estimados de fotos');
+  }
+
+  // ============================================================ 13. Monuments and artworks mapped in OSM (D.pois)
+  // Every piece sits at its OSM node (moved off the carriageway if needed) and faces the nearest street.
+  // Only the steam roller has an open reference photo ("Máquina aplanadora bosque municipal de palmira.jpg",
+  // CC BY-SA 4.0 KevBra1984; "Bosque Municipal de Palmira.jpg", CC BY-SA 4.0 Estebanjosem0621). All the others are
+  // PLAUSIBLE GENERIC pieces built from the name (tractor, bulldozer, aircraft, bull, figures, plaques) — APPROXIMATE.
+  const MONUMENTS = [
+    ['Monumento del Tractor Viejo (Oliver)', 'Monumento del Tractor Viejo (Oliver)', 'tractor', 'Tractor Oliver antiguo sobre pedestal (genérico: verde con ruedas rojas)'],
+    ['Monumento al Estudiante Caído', 'Monumento al Estudiante Caído', 'student', 'Figura sobre pedestal (genérica)'],
+    ['Conmemoración a Roco', 'Conmemoración a Roco', 'stele', 'Placa conmemorativa (genérica)'],
+    ['Virgen de la torre', 'Virgen de la Torre', 'virgin', 'Virgen sobre torre (genérica)'],
+    ['Palmira a sus abuelos samanes', 'Palmira a sus abuelos samanes', 'samanes', 'Placa a los samanes de 1915 junto a la estación (genérica)'],
+    ['Chaman Malagan', 'Chamán Malagana', 'shaman', 'Figura estilizada de la cultura Malagana (genérica)'],
+    ['toro', 'Escultura del toro', 'bull', 'Toro sobre pedestal junto a la plaza de toros (genérico)'],
+    ['Mariposario', 'Mariposario del Bosque', 'butterfly', 'Pabellón de malla (genérico)'],
+    ['Monumento al soldado', 'Monumento al soldado', 'soldier', 'Soldado sobre pedestal (genérico)'],
+    ['Avion del Bosque', 'Avión del Bosque', 'plane', 'Avión de hélice sobre pedestal (tipo desconocido; genérico)'],
+    ['monumento Aplanadora', 'Monumento Aplanadora', 'roller', 'Aplanadora a vapor (foto Commons; medidas estimadas)'],
+    ['bulldozer', 'Monumento Bulldozer', 'dozer', 'Buldócer sobre pedestal (genérico)'],
+  ];
+  function buildMonument(kind, fr) {
+    const gb = fr.gb, DK = col('#2a2b2c'), RED = col('#b8352b'), YEL = col('#e2b021'), GRN2 = col('#4c7c3a');
+    const ped = (w, d, h, cl = STONEP) => { fr.box(0, 0, 0, w + 0.6, d + 0.6, 0.25, CONC); fr.box(0, 0, 0.25, w, d, h - 0.25, cl); return h; };
+    if (kind === 'tractor') {
+      const y = ped(4.6, 3.0, 0.6, CONC);
+      for (const sg of [-1, 1]) { tube(gb, fr.W(-0.9, y + 0.78, sg * 0.5), fr.W(-0.9, y + 0.78, sg * 0.88), 0.78, 0.78, 14, DK); tube(gb, fr.W(-0.9, y + 0.78, sg * 0.48), fr.W(-0.9, y + 0.78, sg * 0.9), 0.5, 0.5, 12, RED);
+        tube(gb, fr.W(1.3, y + 0.4, sg * 0.42), fr.W(1.3, y + 0.4, sg * 0.64), 0.4, 0.4, 10, DK); tube(gb, fr.W(1.3, y + 0.4, sg * 0.4), fr.W(1.3, y + 0.4, sg * 0.66), 0.26, 0.26, 10, RED);
+        fr.box(-0.9, sg * 0.69, y + 1.5, 1.4, 0.4, 0.07, GRN2); }
+      fr.box(0.55, 0, y + 0.42, 1.7, 0.5, 0.45, col('#5a5c5a')); fr.box(0.55, 0, y + 0.85, 2.0, 0.66, 0.66, GRN2); fr.box(1.58, 0, y + 0.8, 0.1, 0.6, 0.76, col('#e9dcb5'));
+      fr.box(-0.45, 0, y + 0.75, 0.8, 0.8, 0.7, GRN2); fr.box(-1.25, 0, y + 1.3, 0.45, 0.45, 0.12, DK);
+      tube(gb, fr.W(-0.5, y + 1.4, 0), fr.W(-0.85, y + 1.95, 0), 0.03, 0.03, 4, DK); cyl(gb, fr.W(-0.85, 0, 0)[0], y + 1.95, fr.W(-0.85, 0, 0)[2], 0.05, 0.22, 0.22, 10, DK, true);
+      tube(gb, fr.W(1.05, y + 1.5, -0.22), fr.W(1.05, y + 2.4, -0.22), 0.06, 0.06, 6, DK);
+      return [[2.6, 1.8], 2];
+    }
+    if (kind === 'dozer') {
+      const y = ped(5.2, 3.8, 0.5, CONC);
+      for (const sg of [-1, 1]) { fr.box(0, sg * 1.1, y, 3.2, 0.55, 0.9, DK); for (const u of [-1.6, 1.6]) tube(gb, fr.W(u, y + 0.45, sg * 0.83), fr.W(u, y + 0.45, sg * 1.37), 0.45, 0.45, 10, DK); }
+      fr.box(-0.3, 0, y + 0.85, 2.4, 1.6, 1.0, YEL); fr.box(0.8, 0, y + 0.85, 1.4, 1.2, 0.85, YEL); fr.box(-0.5, 0, y + 1.85, 1.2, 1.2, 0.15, YEL);
+      for (const a of [-1, 1]) for (const b of [-1, 1]) tube(gb, fr.W(-0.5 + a * 0.55, y + 1.85, b * 0.55), fr.W(-0.5 + a * 0.55, y + 2.9, b * 0.55), 0.05, 0.05, 4, DK);
+      fr.box(-0.5, 0, y + 2.9, 1.4, 1.4, 0.1, YEL); fr.box(2.25, 0, y + 0.05, 0.2, 3.0, 1.15, YEL);
+      for (const sg of [-1, 1]) tube(gb, fr.W(0.6, y + 0.6, sg * 1.1), fr.W(2.15, y + 0.5, sg * 1.1), 0.09, 0.09, 6, YEL);
+      tube(gb, fr.W(1.1, y + 1.7, 0.3), fr.W(1.1, y + 2.6, 0.3), 0.07, 0.07, 6, DK);
+      return [[2.9, 2.2], 2];
+    }
+    if (kind === 'roller') {   // steam roller on the ground (Bosque Municipal), black with white wheel rims, canopy roof
+      tube(gb, fr.W(1.9, 0.72, -0.72), fr.W(1.9, 0.72, 0.72), 0.72, 0.72, 16, DK);
+      for (const sg of [-1, 1]) tube(gb, fr.W(1.9, 0.72, sg * 0.62), fr.W(1.9, 0.72, sg * 0.73), 0.735, 0.735, 16, WHT2, true);
+      fr.box(1.9, 0, 1.4, 0.5, 0.5, 0.6, DK); tube(gb, fr.W(-0.5, 1.35, 0), fr.W(1.6, 1.35, 0), 0.52, 0.52, 12, DK); tube(gb, fr.W(1.4, 1.8, 0), fr.W(1.4, 3.05, 0), 0.13, 0.15, 8, DK);
+      for (const sg of [-1, 1]) { tube(gb, fr.W(-1.0, 0.95, sg * 0.62), fr.W(-1.0, 0.95, sg * 1.0), 0.95, 0.95, 16, DK); tube(gb, fr.W(-1.0, 0.95, sg * 0.9), fr.W(-1.0, 0.95, sg * 1.0), 0.955, 0.955, 16, WHT2, true); tube(gb, fr.W(-1.0, 0.95, sg * 1.02), fr.W(-1.0, 0.95, sg * 1.08), 0.16, 0.16, 8, WHT2); }
+      fr.box(-1.5, 0, 0.55, 0.9, 1.3, 0.95, DK); tube(gb, fr.W(0.2, 1.95, 0.55), fr.W(0.2, 1.95, 0.75), 0.42, 0.42, 14, DK);
+      for (const a of [-1.95, -0.2]) for (const b of [-0.8, 0.8]) tube(gb, fr.W(a, 1.2, b), fr.W(a, 3.0, b), 0.04, 0.04, 4, DK);
+      fr.box(-1.05, 0, 3.0, 2.1, 1.9, 0.07, DK);
+      for (const [a, b] of [[-2.4, -1.4], [-2.4, 1.4], [2.9, -1.4], [2.9, 1.4]]) tube(gb, fr.W(a, 0, b), fr.W(a, 0.7, b), 0.05, 0.05, 4, col('#d9a43a'));
+      return [[2.7, 1.2], 1.5];
+    }
+    if (kind === 'plane') {    // generic single-engine propeller aircraft on a pylon (type unknown)
+      const y = 3.3; fr.box(0, 0, 0, 3.0, 3.0, 0.3, CONC); fr.box(0, 0, 0.3, 1.0, 1.0, y - 0.6, CONC);
+      const SV = col('#b9bec2'); tube(gb, fr.W(-4.6, y + 0.15, 0), fr.W(3.6, y, 0), 0.22, 0.62, 10, SV); tube(gb, fr.W(3.6, y, 0), fr.W(4.1, y, 0), 0.62, 0.5, 10, DK);
+      fr.box(4.2, 0, y - 1.3, 0.08, 0.22, 2.6, DK); fr.box(0.6, 0, y - 0.3, 1.9, 12.8, 0.16, SV); fr.box(-4.2, 0, y + 0.1, 0.9, 4.4, 0.1, SV); fr.box(-4.35, 0, y + 0.2, 1.1, 0.1, 1.5, SV);
+      blob(gb, fr.W(0.6, 0, 0)[0], y + 0.55, fr.W(0.6, 0, 0)[2], 0.5, 2.6, 0.75, 1.0, col('#5f7f95'), 1);
+      for (const sg of [-1, 1]) { const p = fr.W(0.9, 0, sg * 1.4); tube(gb, [p[0], y - 0.3, p[2]], [p[0], y - 1.1, p[2]], 0.06, 0.06, 4, DK); tube(gb, fr.W(0.9, y - 1.3, sg * 1.33), fr.W(0.9, y - 1.3, sg * 1.5), 0.28, 0.28, 10, DK); }
+      return [[1.6, 1.6], 3];
+    }
+    if (kind === 'bull') {
+      const y = ped(3.0, 1.5, 1.1), B2 = col('#34312c');
+      blob(gb, fr.W(0, 0, 0)[0], y + 1.2, fr.W(0, 0, 0)[2], 1, 1.15, 0.52, 0.48, B2, 1);
+      const hp = fr.W(0.45, 0, 0); blob(gb, hp[0], y + 1.55, hp[2], 0.42, 1, 0.8, 1, B2, 0);
+      const hd = fr.W(1.35, 0, 0); blob(gb, hd[0], y + 1.22, hd[2], 0.32, 1.2, 0.9, 0.85, B2, 0);
+      for (const sg of [-1, 1]) { tube(gb, fr.W(1.4, y + 1.42, sg * 0.18), fr.W(1.62, y + 1.7, sg * 0.5), 0.06, 0.02, 5, col('#d8d2c2')); for (const u of [-0.75, 0.7]) tube(gb, fr.W(u, y + 0.95, sg * 0.24), fr.W(u + 0.05, y, sg * 0.24), 0.13, 0.08, 6, B2); }
+      tube(gb, fr.W(-1.1, y + 1.3, 0), fr.W(-1.3, y + 0.5, 0.05), 0.05, 0.04, 4, B2);
+      return [[1.8, 1.1], 2];
+    }
+    if (kind === 'butterfly') {
+      const p = fr.P(0, 0), MESH = col('#56665d');
+      prism(gb, p.x, 0, p.z, 4.2, 6.5, 6, 0, MESH, 6.5); cone(gb, p.x, 4.2, p.z, 2.0, 6.6, 6, col('#6b7a72'));
+      for (let i = 0; i < 6; i++) { const a = i / 6 * TAU; tube(gb, [p.x + Math.sin(a) * 6.5, 0, p.z + Math.cos(a) * 6.5], [p.x + Math.sin(a) * 6.5, 4.25, p.z + Math.cos(a) * 6.5], 0.08, 0.08, 4, WHT2); }
+      fr.face('u', 6.5 * Math.cos(Math.PI / 6), 1).rect(-1.1, 1.1, 0, 2.4, 0.03, DK);
+      return [[6.6, 6.6], 4];
+    }
+    if (kind === 'virgin') { fr.box(0, 0, 0, 2.6, 2.6, 0.5, CONC); fr.box(0, 0, 0.5, 1.6, 1.6, 6.0, WHT2); fr.box(0, 0, 6.5, 2.1, 2.1, 0.3, STONEP); figure(fr, 0, 0, 6.8, 1.9, col('#f1eee6'), 'virgin'); return [[1.3, 1.3], 7]; }
+    if (kind === 'stele' || kind === 'samanes') { fr.box(0, 0, 0, 2.0, 1.2, 0.3, CONC); fr.box(0, 0, 0.3, 1.3, 0.5, 1.4, STONEP); plaque(fr, 0.25, 0.75, 0.9, 0.6); return [[1.0, 0.6], 1.7]; }
+    // figures on pedestals
+    const y = ped(1.6, 1.6, kind === 'shaman' ? 1.0 : 1.8); plaque(fr, 0.8, 0.6, 0.9, 0.5);
+    figure(fr, 0, 0, y, kind === 'shaman' ? 2.4 : 2.2, kind === 'shaman' ? col('#a8843c') : BRONZE, kind === 'student' ? 'stride' : kind);
+    return [[1.1, 1.1], y + 2];
+  }
+  const WHT2 = col('#efede6');
+  function buildMonuments(add) {
+    const items = [];
+    for (const [poi, name, kind, note] of MONUMENTS) { const p = poiAt(poi); if (p && inArea(p)) items.push({ p, name, kind, note }); }
+    const groups = [];   // merge pieces closer than 350 m into one mesh
+    for (const it of items) { const g = groups.find(q => Math.hypot(q.c.x - it.p.x, q.c.z - it.p.z) < 350); if (g) g.items.push(it); else groups.push({ c: it.p, items: [it] }); }
+    groups.forEach((g, gi) => {
+      const gb = new GB();
+      for (const it of g.items) {
+        const fr = objFrame(gb, it.p, it.kind === 'butterfly' ? 8 : it.kind === 'plane' ? 7 : 3), [[hu, hv], h] = buildMonument(it.kind, fr);
+        solid(fr.pts([[-hu, -hv], [hu, -hv], [hu, hv], [-hu, hv]]), h, 'lm:mon-' + it.kind);
+        info(it.name, fr.o.x, fr.o.z, 'OSM (punto); ' + it.note);
+      }
+      add(gb, 'monuments' + gi);
+    });
+  }
+
+
+  // ------------------------------------------------------------ preload (module load time, before boot)
+  // Missions / NPCs / the map raster read LANDMARK_INFO and W.landmarks before the build hooks run, so provisional
+  // entries (same names and positions as the builders use) and the new footprints are registered here already.
+  {
+    const park = (W.landmarks.park || []).find(l => /Bol/.test(l.n));
+    if (park) { const o = obb(park.P); info('Parque Bolívar', o.cx, o.cz, 'Contorno, estatua (1947) y fuente según OSM; senderos, jardineras, palmas y faroles estimados de fotos'); }
+    for (const L of (W.landmarks.cathedral || [])) { const o0 = obb(L.P), hint = park ? { x: park.c.x - o0.cx, z: park.c.z - o0.cz } : { x: o0.ux, z: o0.uz }, FA = frontAxes(L.P, hint); info('Catedral de Nuestra Señora del Rosario del Palmar', FA.o.cx, FA.o.cz, 'Huella OSM; ladrillo, torre central, torrecillas y cúpula modeladas de fotos (alturas estimadas)', { front: { x: FA.O.x + FA.f.x * 6, z: FA.O.z + FA.f.z * 6 } }); }
+    for (const L of (W.landmarks.camp || [])) info('CAMP · Centro Administrativo Municipal', L.c.x, L.c.z, 'Huella OSM; torre de oficinas (8 pisos sobre podio de 2) estimada de fotos');
+    { const A = alcaldiaFrame(), out = alcaldiaOutline(A); heritage(out, 'Antigua Alcaldía', 'lm:alcaldia'); info('Antigua Alcaldía · Palacio de Gobierno', A.O.x + A.U.x * A.Lu / 2 + A.V.x * A.Lv / 2, A.O.z + A.U.z * A.Lu / 2 + A.V.z * A.Lv / 2, 'Republicano, 1924-28 (BIC nacional). Esquina Cra 30 / Cl 30 (Wikidata Q42838384), lote catastral de 3 pisos; patio estimado'); }
+    { const P = footprint('osm:way/421415401'); if (P) { const o = obb(P); heritage(P, 'Estación del Ferrocarril', 'lm:station'); info('Estación del Ferrocarril de Palmira', o.cx, o.cz, 'Huella OSM; 1917, Ferrocarril del Pacífico (monumento nacional). Alturas estimadas de fotos'); } }
+    for (const L of (W.landmarks.stadium || [])) { const o = obb(L.P); info('Estadio Francisco Rivera Escobar', o.cx, o.cz, 'Huella y tribunas OSM; pista atlética, cubierta de la tribuna occidental y torres de luz aproximadas'); }
+    heritage(circleP(BULL.c.x, BULL.c.z, BULL.R, 24), 'Plaza de Toros', 'lm:bullring'); info('Plaza de Toros · Agustín Barona Pinillos', BULL.c.x, BULL.c.z, 'Inaugurada 1949 (8.000 puestos). Sin foto abierta: anillo genérico; centro y radio aproximados');
+    for (const L of (W.landmarks.church || [])) { const FA = frontAxes(L.P, /Carmel/i.test(L.n) ? { x: 1, z: 0 } : { x: 0, z: -1 }); info(L.n, FA.o.cx, FA.o.cz, /Carmel/i.test(L.n) ? 'Huella OSM; neogótica (1929-43). Sin foto abierta: torre y aguja aproximadas' : 'Huella OSM; torre de 1915. Sin foto abierta: fachada y torre aproximadas'); }
+    for (const L of (W.landmarks.market || [])) info('Galería Central de Palmira', L.c.x, L.c.z, 'Huella OSM; edificio de 1953. Sin foto abierta: volumen y portadas aproximados');
+    { const N = { x: BOSQUE.north.x, z: -BOSQUE.north.z }, V0 = { x: -N.z, z: N.x }, V = V0.x > 0 ? V0 : { x: -V0.x, z: -V0.z }, Pt = (u, v) => ({ x: BOSQUE.o.x + N.x * u + V.x * v, z: BOSQUE.o.z + N.z * u + V.z * v });
+      heritage([Pt(0, 0), Pt(15, 0), Pt(15, 6), Pt(0, 6)], 'Bosque Municipal', 'lm:bosque'); const c = Pt(17.5, -3); info('Bosque Municipal', c.x, c.z, 'Entrada (pabellón azul y verde, foto 2026); posición sobre la Cra 16 estimada'); }
+    { const a = D.meta && D.meta.area; if (a && a[1] <= -1745 && a[0] <= -700) { const o = EN(-664.5, -1736.5), U = unit(0.326, -0.945), V = unit(-0.945, -0.326); info('Universidad Nacional · Sede Palmira', o.x + V.x * 4, o.z + V.z * 4, 'Portería sobre la Cra 32 (foto 2004); posición estimada'); } }
+    for (const [poi, name, kind, note] of MONUMENTS) { const p = poiAt(poi); if (p && inArea(p)) { const fr = objFrame(null, p, kind === 'butterfly' ? 8 : kind === 'plane' ? 7 : 3); info(name, fr.o.x, fr.o.z, 'OSM (punto); ' + note); } }
+  }
+
   // ------------------------------------------------------------ hook
   HOOKS.buildLandmarksDetailed = () => {
     const t0 = performance.now(), stats = { meshes: 0, tris: 0, by: {} };
@@ -3164,6 +3434,8 @@ const LM_SELF_APPLY = true;
     for (const L of (W.landmarks.market || [])) run('market', () => buildMarket(L, add));
     run('bosque', () => buildBosque(add));
     run('unal', () => buildUNAL(add));
+    for (const L of (W.landmarks.park || []).filter(l => /Bol/.test(l.n))) run('park', () => buildParkBolivar(L, add));
+    run('monuments', () => buildMonuments(add));
     HOOKS.landmarkStats = stats;
     console.info('landmarks detailed', Math.round(performance.now() - t0) + 'ms', stats.meshes, 'meshes', stats.tris, 'tris', stats.by, 'replaced', HOOKS.removeBuildingIds.length);
   };
@@ -3871,6 +4143,15 @@ const BICI_COLORS = ['#c8302b', '#1d5fb8', '#f2c21b', '#2f9e4a', '#16181a', '#e9
 const TRACTOR_COLORS = ['#2f7d3a', '#c8302b', '#e2a21b', '#2a5fa8'];
 const TRUCK_COLORS = ['#e9e7e1', '#1f4e8c', '#c8302b', '#2f6b4a', '#f2c21b'];
 const pickOf = a => a[Math.floor(rand() * a.length)];
+// OSM road points (verified, ODbL): real bus stops, speed bumps ("policías acostados") and stop signs
+let _roadPts = null;
+function roadPoints() {
+  if (_roadPts) return _roadPts;
+  _roadPts = new Grid(40); const P = D.points || {};
+  for (const [k, kind] of [['bus_stop', 'bus'], ['traffic_calming', 'bump'], ['stop', 'stop']]) for (const [e, n] of (P[k] || [])) { const o = { x: e / 10, z: -n / 10, kind }; _roadPts.insertBox(o, o.x, o.z, o.x, o.z); }
+  return _roadPts;
+}
+const finite = (...v) => v.every(Number.isFinite);
 function agentLook(type) {
   const t = VTYPES[type], v = { helmet: rand() * 8 | 0, shirt: rand() * 8 | 0, skin: rand() * 4 | 0, alt: 0, pax: 0 };
   let color;
@@ -3919,8 +4200,9 @@ class Agent {
     this.v = Math.min(this.vMax * 0.7, 8); this.laneSeed = rand(); if (this.mode !== 'drive') this.setDoors(false); this.mode = 'drive'; this.filterT = 0; this.passT = 0; this.passWide = false; this.blockT = 0; this.waitT = 0; this.greenT = 9; this.wasRed = false;
     this.nextStop = 60 + rand() * 220; this.pickCD = 4 + rand() * 6; this.thinkT = rand() * 0.5; this.waitPed = null; this.blocker = null; this.blkV = 0;
     if (this.hailer) { this.pax = this.type === 'mototaxi' ? !!(this.variant & VB.PAX) : rand() < 0.45; this.paxT = 30 + rand() * 90; }
-    this.lat = this.baseLane();
+    this.lat = this.baseLane(); this.feat = null;
     this.place(true);
+    if (!finite(this.x, this.z, this.a, this.v, this.lat, this.s)) { this.despawn(); this.cool = 0; return; }
     if (this.wagons) this.initTrail();
   }
   despawn() {
@@ -4006,6 +4288,12 @@ class Agent {
       if (this.priority > 0) this.priority -= dt;
       else if (this.boxOccupied(node) && remain > 6) vT = Math.min(vT, Math.max(0, (remain - 8) * 0.8));
     }
+    // speed bumps / stop signs from OSM: slow right down (and roll through the stop, local style)
+    if (this.feat) {
+      const o = this.feat, al = (o.x - this.x) * this.fx + (o.z - this.z) * this.fz;
+      if (al < -3 || al > 40) this.feat = null;
+      else if (al < 14) vT = Math.min(vT, o.kind === 'bump' ? (this.two ? 4.5 : 2.8) : Math.max(1.5, al * 0.35));
+    }
     if (this.wasRed && !red) this.greenT = 0;
     this.wasRed = red; this.greenT += dt;
     // kerb stops (bus stops anywhere, taxi pick-up / drop-off)
@@ -4075,7 +4363,15 @@ class Agent {
   think(ctx, remain) {
     if (this.mode !== 'drive') return;
     if (Math.hypot(this.x - ctx.px, this.z - ctx.pz) > 170) return;
+    // ambient "pito" culture: short taps for no special reason (greeting, warning, impatience); taxis most of all
+    if (this.v > 1 && rand() < (this.hailer ? 0.012 : this.t.moto ? 0.008 : this.t.bici ? 0 : 0.004)) this.honk(0.08 + rand() * 0.12, rand() < 0.3);
     const e = this.e, okSpot = remain > 28 && this.s > 8 && e.w >= 5.5 && e.cls !== 'service';
+    if (!this.feat || this.stopper) for (const o of roadPoints().query(this.x + this.fx * 16, this.z + this.fz * 16, 18, [], QSTAMP++)) {
+      const dx = o.x - this.x, dz = o.z - this.z, al = dx * this.fx + dz * this.fz, lt = Math.abs(-dx * this.fz + dz * this.fx);
+      if (al < 3 || al > 30) continue;
+      if (o.kind === 'bus') { if (this.stopper && lt < e.w / 2 + 8 && al > 6 && this.nextStop < 140) { this.startKerb('bus', al); return; } }   // real stop
+      else if (lt < e.w / 2 + 1.5 && (!this.feat || al < (this.feat.x - this.x) * this.fx + (this.feat.z - this.z) * this.fz)) this.feat = o;
+    }
     if (this.stopper) { if (this.nextStop < 0 && okSpot) this.startKerb('bus', 10 + rand() * 10); return; }
     if (!this.hailer) return;
     if (this.pax) { this.paxT -= 0.5; if (this.paxT < 0 && okSpot) this.startKerb('drop', 8 + rand() * 6); return; }
@@ -4095,7 +4391,7 @@ class Agent {
     }
     return best;
   }
-  startKerb(kind, dist) { this.mode = 'kerb'; this.stopKind = kind; this.stopLeft = dist; }
+  startKerb(kind, dist) { if (!Number.isFinite(dist)) return; this.mode = 'kerb'; this.stopKind = kind; this.stopLeft = dist; }
   beginDwell() {
     this.mode = 'dwell'; const k = this.stopKind;
     if (k === 'bus') {
@@ -4154,6 +4450,7 @@ class Agent {
       if (acc + seg >= need[k]) { const u = seg > 1e-6 ? (need[k] - acc) / seg : 0; pts.push({ x: px + (q.x - px) * u, z: pz + (q.z - pz) * u }); k++; continue; }
       acc += seg; px = q.x; pz = q.z; i--;
     }
+    if (!pts.every(q => finite(q.x, q.z))) { tr.length = 0; tr.push({ x: this.x, z: this.z }); return; }
     const ca = Math.cos(this.a), sa = Math.sin(this.a);
     this.wagons.forEach((w, j) => {
       const F = pts[2 * j], Rr = pts[2 * j + 1], cx = (F.x + Rr.x) / 2, cz = (F.z + Rr.z) / 2, wy = Math.atan2(-(F.z - Rr.z), F.x - Rr.x);
@@ -4216,7 +4513,7 @@ function initTraffic() {
   for (const type of fleetFor(n)) TRAFFIC.pool.push(new Agent(type));
 }
 function spawnOne(px, pz, camDir) {
-  const pool = TRAFFIC.pool, n = pool.length; if (!n) return;
+  const pool = TRAFFIC.pool, n = pool.length; if (!n || !finite(px, pz)) return;
   let free = null; const st = Math.floor(rand() * n);
   for (let k = 0; k < n; k++) { const a = pool[(st + k) % n]; if (!a.active && a.cool <= 0) { free = a; break; } }
   if (!free) return;
@@ -4243,8 +4540,9 @@ function updateTraffic(dt, ctx) {
   TRAFFIC.grid = new Grid(16);
   for (const a of TRAFFIC.pool) {
     if (!a.active) { if (a.cool > 0) a.cool -= dt; continue; }
+    if (!finite(a.x, a.z, a.v, a.s, a.lat, a.a)) { a.despawn(); continue; }   // self-heal: never let a broken agent poison the grid
     TRAFFIC.grid.insertBox(a, a.x - 3, a.z - 3, a.x + 3, a.z + 3);
-    if (a.wagons) for (const w of a.wagons) { const p = w.proxy; TRAFFIC.grid.insertBox(p, p.x - 3.5, p.z - 3.5, p.x + 3.5, p.z + 3.5); }
+    if (a.wagons) for (const w of a.wagons) { const p = w.proxy; if (finite(p.x, p.z)) TRAFFIC.grid.insertBox(p, p.x - 3.5, p.z - 3.5, p.x + 3.5, p.z + 3.5); }
   }
   // per-frame caches shared by every agent's scan
   TRAFFIC.roadPeds.length = 0; for (const p of PEDS.list) if (p.active && p.onRoad) TRAFFIC.roadPeds.push(p);
@@ -4255,6 +4553,7 @@ function updateTraffic(dt, ctx) {
     const d = Math.hypot(a.x - px, a.z - pz);
     if (d > (a.wagons ? 310 : 290) || (a.stuck > 14 && d > 45)) { a.despawn(); continue; }
     a.update(dt, ctx);
+    if (!finite(a.x, a.z, a.v, a.s, a.lat, a.a)) a.despawn();
   }
 }
 // player vs traffic collisions
@@ -4610,12 +4909,17 @@ function cbActor(kind, slot) { return { kind, slot, active: false, x: 0, y: 0, z
 // ---------------------------------------------------------------- helpers
 function cbTurn(a, ta, k) { const d = ((ta - a + Math.PI) % TAU + TAU) % TAU - Math.PI; return a + d * Math.min(1, k); }
 function cbYawTo(ax, az, bx, bz) { return Math.atan2(-(bz - az), bx - ax); }
-function cbMove(o, tx, tz, sp, dt, stopAt = 0) {
+function cbMove(o, tx, tz, sp, dt, stopAt = 0) {   // straight line + wall slide; side-steps for a moment when stuck
   const dx = tx - o.x, dz = tz - o.z, L = Math.hypot(dx, dz);
   if (L > stopAt + 0.02) {
-    const st = Math.min(L - stopAt, sp * dt); o.x += dx / L * st; o.z += dz / L * st;
+    const st = Math.min(L - stopAt, sp * dt), x0 = o.x, z0 = o.z;
+    let ux = dx / L, uz = dz / L;
+    if (o.detT > 0) { o.detT -= dt; const c = Math.cos(1.2 * o.det), s = Math.sin(1.2 * o.det); [ux, uz] = [ux * c - uz * s, ux * s + uz * c]; }
+    o.x += ux * st; o.z += uz * st;
     const h = collideCircle(o.x, o.z, 0.32); if (h) { o.x += h.x; o.z += h.z; }
-    o.phase += st * 2.8; o.a = cbTurn(o.a, Math.atan2(-dz, dx), 12 * dt);
+    const moved = Math.hypot(o.x - x0, o.z - z0);
+    if (moved < st * 0.3) { o.stuck = (o.stuck || 0) + dt; if (o.stuck > 0.35) { o.stuck = 0; o.det = Math.random() < 0.5 ? -1 : 1; o.detT = 0.9 + Math.random() * 0.6; } } else o.stuck = 0;
+    o.phase += moved * 2.8; o.a = cbTurn(o.a, Math.atan2(-uz, ux), 12 * dt);
   }
   o.y = groundAt(o.x, o.z); return L;
 }
@@ -4917,10 +5221,10 @@ function cbCops(dt) {
       continue;
     }
     // chase / arrest
-    const arrestR = G.inCar ? 2.8 : 1.35;
-    cbMove(o, me.x, me.z, 4.4, dt, arrestR * 0.8);
+    const arrestR = G.inCar ? 2.8 : 1.35, gunfight = lvl >= 3 && !cbNoGuns() && cbGunReady() && !G.inCar;   // an armed player at level 3 gets a standoff, not a tackle
+    cbMove(o, me.x, me.z, 4.4, dt, gunfight ? 7 : arrestR * 0.8);
     if (lvl >= 3 && !cbNoGuns() && o.cd <= 0 && d > 5 && d < 28 && lineOfSight(o.x, o.z, me.x, me.z)) { o.state = 'aim'; o.aimT = 0.8; continue; }
-    if (d < arrestR && (!G.inCar || speed < 1)) {
+    if (d < arrestR && !gunfight && (!G.inCar || speed < 1)) {
       o.arrest += dt;
       if (o.arrest > 1.8) { cbClearCops(); onBusted(); return; }
     } else o.arrest = Math.max(0, o.arrest - dt);
@@ -4951,7 +5255,7 @@ function cbThugs(dt) {
     if (o.stag > 0) { o.stag -= dt; o.x += o.nx * 2 * dt; o.z += o.nz * 2 * dt; o.lean = 0.35; continue; }
     if (o.state === 'flee') { o.crouch = 0; o.t += dt; cbMove(o, o.x - dx, o.z - dz, 4.8, dt); if (o.t > 9 || d > 45) o.active = false; continue; }
     if (!ok) { o.crouch = 0; o.a = cbTurn(o.a, cbYawTo(o.x, o.z, me.x, me.z), 5 * dt); continue; }
-    if (o.state === 'idle') { if (d < 45) { o.state = o.armed ? 'move' : 'rush'; if (o.armed) cbPickCover(o, me.x, me.z); } continue; }
+    if (o.state === 'idle') { if (d < 45 || (CB.fight === 1 && d < 90)) { o.state = o.armed ? 'move' : 'rush'; if (o.armed) cbPickCover(o, me.x, me.z); } continue; }
     if (o.armed && d < 5.5 && !G.inCar && o.state !== 'aim') o.state = 'rush';
     if (o.state === 'move') {
       o.crouch = Math.max(0, o.crouch - dt * 4);
@@ -5018,11 +5322,26 @@ function cbFindSite() {
   if (!best) scan(/^(roof|yes)$/);
   if (!best) return null;
   const { b, c, ne } = best;
-  // walk from the road toward the building to find its wall, then put the yard between wall and road
-  let bx = ne.x, bz = ne.z; const L = Math.hypot(c.x - ne.x, c.z - ne.z) || 1, ux = (c.x - ne.x) / L, uz = (c.z - ne.z) / L;
-  for (let s = 0; s < L; s += 1) { const x = ne.x + ux * s, z = ne.z + uz * s; if (pointInPoly(x, z, b.P)) { bx = x; bz = z; break; } }
-  const gap = Math.hypot(bx - ne.x, bz - ne.z), off = clamp(gap * 0.55, 4, 12);
-  const site = { x: bx - ux * off, z: bz - uz * off, b, road: ne };
+  // look for an open yard: rays from the centroid leave the building and must reach a road with nothing solid in between
+  let site = null, sb = Infinity;
+  for (let k = 0; k < 24; k++) {
+    const an = k / 24 * TAU, ux = Math.cos(an), uz = Math.sin(an); let ex = null, ez = 0;
+    for (let d = 0; d < 400; d += 1) {
+      const x = c.x + ux * d, z = c.z + uz * d;
+      if (ex === null) { if (!pointInPoly(x, z, b.P)) { ex = x; ez = z; } continue; }
+      const g = Math.hypot(x - ex, z - ez); if (g < 2) continue;
+      if (collideCircle(x, z, 0.9)) break;
+      const r = nearestEdge(x, z, 25, okE);
+      if (r && r.d < r.e.w / 2 + 0.5) { if (g >= 10 && g <= 90) { const sc = Math.abs(g - 28); if (sc < sb) { sb = sc; const off = clamp(g * 0.5, 6, 16); site = { x: ex + ux * off, z: ez + uz * off, b, road: r }; } } break; }
+      if (g > 90) break;
+    }
+  }
+  if (!site) {   // fallback: between the wall and the nearest road
+    let bx = ne.x, bz = ne.z; const L = Math.hypot(c.x - ne.x, c.z - ne.z) || 1, ux = (c.x - ne.x) / L, uz = (c.z - ne.z) / L;
+    for (let s2 = 0; s2 < L; s2 += 1) { const x = ne.x + ux * s2, z = ne.z + uz * s2; if (pointInPoly(x, z, b.P)) { bx = x; bz = z; break; } }
+    const gap = Math.hypot(bx - ne.x, bz - ne.z), off = clamp(gap - 16, 4, Math.max(4, gap - 7));
+    site = { x: bx - ux * off, z: bz - uz * off, b, road: ne };
+  }
   const [st, cross] = streetLabel(site.x, site.z, 1, 0);
   const dir = Math.abs(site.x) > Math.abs(site.z) ? (site.x > 0 ? 'del oriente' : 'del occidente') : (site.z < 0 ? 'del norte' : 'del sur');
   site.name = `las bodegas ${dir}` + (st ? ` (${st}${cross ? ' con ' + cross : ''})` : '');
@@ -5333,7 +5652,7 @@ const MISSIONS = {
 };
 let PLACES = {};
 function initMissions() {
-  const park = lm('Parque Bolívar'), cat = lm('Catedral'), gal = lm('Galería'), est = lm('Estadio'), tri = lm('La Santísima'), car = lm('Iglesia De los Carmelos'), camp = lm('CAMP');
+  const pk0 = (W.landmarks.park || [])[0], park = lm('Parque Bolívar') || (pk0 ? { n: 'Parque Bolívar', x: pk0.c.x, z: pk0.c.z } : { x: 64, z: -18 }), cat = lm('Catedral'), gal = lm('Galería'), est = lm('Estadio'), tri = lm('La Santísima'), car = lm('Iglesia De los Carmelos'), camp = lm('CAMP');
   PLACES = {
     catedral: cat && curbPoint(cat.x, cat.z, 'Calle 30'),     // Calle 30 #29-79
     galeria: gal && curbPoint(gal.x, gal.z, 'Calle 28'),      // Calle 28 #25-69
@@ -6034,7 +6353,7 @@ function offerMission(id) {
   NPCS.offer = d; showPrompt(`<kbd>${IS_TOUCH ? 'Usar' : 'E'}</kbd> Aceptar: ${d.title}`); NPCS.offerT = 6;
 }
 function addNpcMissions() {
-  const park = lm('Parque Bolívar'), gal = PLACES.galeria, org = NPCS.list.find(n => n.id === 'organizadora'), pollo = NPCS.list.find(n => n.id === 'pollo');
+  const pk0 = (W.landmarks.park || [])[0], park = lm('Parque Bolívar') || (pk0 ? { x: pk0.c.x, z: pk0.c.z } : { x: 64, z: -18 }), gal = PLACES.galeria, org = NPCS.list.find(n => n.id === 'organizadora'), pollo = NPCS.list.find(n => n.id === 'pollo');
   const near = n => curbPoint(n.x, n.z);
   MISSIONS.defs.push(
     { id: 'empanadas', title: 'Domicilio de empanadas', giver: 'Doña Aurora', npc: true, reward: 12000,
@@ -7376,7 +7695,8 @@ const AUDIO = (() => {
       const f = 38 + rpm * 120;
       engine.frequency.setTargetAtTime(f, t, 0.05); eng2.frequency.setTargetAtTime(f * 0.5, t, 0.05);
       engFilt.frequency.setTargetAtTime(380 + rpm * 1400 + s.throttle * 500, t, 0.08);
-      engGain.gain.setTargetAtTime(s.inCar ? 0.05 + s.throttle * 0.05 + rpm * 0.03 : 0, t, 0.1);
+      const pedal = typeof G !== 'undefined' && G.car && G.car.t.bici;   // bicycles have no engine
+      engGain.gain.setTargetAtTime(s.inCar && !pedal ? 0.05 + s.throttle * 0.05 + rpm * 0.03 : 0, t, 0.1);
       tyreGain.gain.setTargetAtTime(s.inCar && s.slip > 2.5 && v > 5 ? Math.min(0.12, (s.slip - 2.5) * 0.03) : 0, t, 0.05);
       ambGain.gain.setTargetAtTime(0.045 + (s.inCar ? 0 : 0.03), t, 0.5);
       // siren: nearest active patrol
@@ -8319,7 +8639,7 @@ function loop(now) {
   else if (!promptShown) {   // named NPC / mission prompts take priority
     const near = (o, r) => o && Math.hypot(w.x - o.x, w.z - o.z) < r;
     let act = null;
-    if (near(car, 4)) act = { label: car.t.moto ? 'Subirse a la moto' : 'Subir al carro', run: () => toggleCar() };
+    if (near(car, 4)) act = { label: car.t.verb || (car.t.moto ? 'Subirse a la moto' : 'Subir al carro'), run: () => toggleCar() };
     if (!act) { const pc = G.parked.find(p => near(p, 4)); if (pc) act = { label: 'Subir: ' + pc.t.name, run: () => takeVehicle(pc.type, pc.color, 0, 0, 0, { fromParked: pc }) }; }
     if (!act) { const ag = TRAFFIC.pool.find(a => a.active && near(a, a.t.moto ? 3 : 4.2)); if (ag) act = { label: (ag.t.moto ? 'Quitarle la moto' : 'Robar ' + ag.t.name), run: () => carjack(ag, false) }; }
     if (!act) { const pt = PURSUIT.patrols.find(p => p.active && near(p, 4.2)); if (pt) act = { label: 'Robar la patrulla', run: () => carjack(pt, true) }; }
