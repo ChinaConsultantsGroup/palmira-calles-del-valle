@@ -1398,7 +1398,7 @@ function buildWorld() {
   // colours (linear, via col())
   const CONC = col('#a9a69d'), ARM = col('#8d8a83'), INS = col('#6f6a62'), TRF = col('#8c9494'), LAMPC = col('#c9cbc8'), LENS = col('#fff3c4'),
     CABLE = col('#1c1d1e'), METAL = col('#7c8084'), PLATE_EDGE = col('#1d5a3a'), FRAME = col('#3a3d40'), RED = col('#b3312a'), YEL = col('#e2b728'),
-    WHT = col('#ecebe6'), WOOD = col('#8a5a35'), BENCHC = col('#b9b4a8'), BIN = col('#2f6b4a'), SOIL = col('#4f3e2c'), PIT = col('#c9c3b5'), PARKPOST = col('#2c3b33');
+    WHT = col('#ecebe6'), BLK = col('#1a1b1c'), WOOD = col('#8a5a35'), BENCHC = col('#b9b4a8'), BIN = col('#2f6b4a'), SOIL = col('#4f3e2c'), PIT = col('#c9c3b5'), PARKPOST = col('#2c3b33');
   const AWN = ['#c8302b', '#2f6b4a', '#1f4e8c', '#e98a3b', '#f2c21b', '#7d1f22', '#3fa4b8', '#5b5f63', '#e0407a'].map(col);
   const MOTO_COL = ['#c8302b', '#16181a', '#1f4e8c', '#e9e7e1', '#9da3a8', '#2f6b4a', '#f2c21b', '#7d1f22'];
 
@@ -1618,7 +1618,7 @@ function buildWorld() {
     const m = NUM_RE.exec(name || '');
     if (!m || m[0].trim().length < name.trim().length - 0) return null;
     const pre = { calle: 'CALLE', carrera: 'CARRERA', carerra: 'CARRERA', diagonal: 'DIAGONAL', transversal: 'TRANSVERSAL', trasnversal: 'TRANSVERSAL', avenida: 'AVENIDA' }[m[1].toLowerCase()];
-    const num = (m[2] + (m[3] || '').replace(/\s+/g, ' ').trim().replace(/^(\S)/, '$1') + (m[4] ? ' ' + m[4] : '')).toUpperCase().replace(/(\d)\s+([A-Z]{1,2})\b/, '$1$2');
+    const suf = (m[3] || '').replace(/\s+/g, ' ').trim(), num = (m[2] + (/^bis/i.test(suf) ? ' ' : '') + suf + (m[4] ? ' ' + m[4] : '')).toUpperCase();
     return { pre, num };
   }
   function drawSpecial(g, x, y) {   // 4 squares: PARE (front), CEDA EL PASO (front), sign back (grey octagon), sign back (grey triangle)
@@ -2062,7 +2062,8 @@ function buildWorld() {
     // OSM POI signs
     for (const ps of c.pois) {
       const f = ps.f, w = clamp(f.L - 0.5, 1.6, ps.big ? 6 : 4.6);
-      const r = addSign(mid, tb, f, 0.5, w, ps.R, ps.big, !ps.big && H(f.p.x, f.p.z, 4) < 0.6, f.p.x * 7 + f.p.z);
+      const pm = { x: (f.p.x + f.q.x) / 2, z: (f.p.z + f.q.z) / 2 }, plateNear = ST.wallPlates.query(pm.x, pm.z, w / 2 + 1, [], QSTAMP++).some(q => Math.hypot(q.x - pm.x, q.z - pm.z) < w / 2 + 0.9);
+      const r = addSign(mid, tb, f, 0.5, w, ps.R, ps.big, !ps.big && !plateNear && H(f.p.x, f.p.z, 4) < 0.6, f.p.x * 7 + f.p.z);
       if (r && !ps.big && H(r.x, r.z, 9) < 0.55) { const ne = nearestEdge(r.x, r.z, 14, e => e === f.ne.e); if (ne) motoRow(ne.e, ne.s, sideOf(ne.e, ne.s, r.x, r.z), 1 + Math.floor(H(r.x, r.z, 8) * 4), r.x * 3 + r.z); }
     }
     tally('poiSigns');
@@ -2072,8 +2073,8 @@ function buildWorld() {
     let it = 0;
     for (const b of c.bldgs) {
       if (++it % 30 === 0) yield;
-      if (cnt.signs >= L.signs || !bldOk(b)) continue;
-      const S = signedArea(b.P), used = ST.used.get(b);
+      if (cnt.signs >= L.signs || !bldOk(b) || !shopKindOk(b, Math.hypot(b.c.x - ST.P0.x, b.c.z - ST.P0.z))) continue;
+      const S = signedArea(b.P), used = ST.used.get(b), comm = b.k === 'commercial';
       for (let i = 0; i < b.P.length && cnt.signs < L.signs; i++) {
         if (used && used.has(i)) continue;
         const f = facadeInfo(b, i, S); if (!f) continue;
@@ -2083,12 +2084,13 @@ function buildWorld() {
           const dC = Math.hypot(x - ST.P0.x, z - ST.P0.z), main = MAIN.has(f.ne.e.cls);
           const ne = nearestEdge(x + f.nx * f.fd, z + f.nz * f.fd, 6, e => e === f.ne.e) || f.ne;
           const corner = (ne.s < 16 && deg(ne.e.a) >= 3) || (ne.e.L - ne.s < 16 && deg(ne.e.b) >= 3);
-          let pr = dC < 600 ? 0.62 : dC < 1100 ? (main ? 0.4 : 0.14) : (main ? 0.28 : 0.04);
-          if (corner) pr = Math.max(pr, 0.3);
+          let pr = comm ? (dC < 600 ? 0.8 : main ? 0.6 : 0.45) : 0.55;   // cadastre 'commercial' parts, or centre ground floors
+          if (corner) pr = Math.max(pr, 0.5);
           if (H(seed, 1) > pr * L.shop) continue;
           const gi = corner && dC >= 600 ? CORNER_IDX[Math.floor(H(seed, 2) * CORNER_IDX.length)] : Math.floor(H(seed, 3) * GENERIC.length);
           const w = clamp(mL - 0.5, 1.4, 4.2);
-          const r = addSign(mid, tb, f, t, w, ST.genCells[gi * 2 + (H(seed, 4) < 0.5 ? 0 : 1)], false, H(seed, 5) < (dC < 600 ? 0.55 : 0.35), seed);
+          const plateNear = ST.wallPlates.query(x, z, w / 2 + 1, [], QSTAMP++).some(q => Math.hypot(q.x - x, q.z - z) < w / 2 + 0.9);
+          const r = addSign(mid, tb, f, t, w, ST.genCells[gi], false, !plateNear && H(seed, 5) < (dC < 600 ? 0.55 : 0.35), seed);
           if (!r) continue;
           cnt.signs++;
           const sd = sideOf(ne.e, ne.s, x, z);
@@ -2132,12 +2134,14 @@ function buildWorld() {
     for (const bs of c.bus) {
       const { x, z, nx, nz, ux, uz } = bs;
       prism(mid, x, KERB, z, 0.04, 0.04, 2.75, 5, METAL);
-      const cx = x + nx * 0.5, cz = z + nz * 0.5, y = KERB + 2.45;
-      bx(mid, cx, y, cz, 0.07, 0.27, 1.02, ux, uz, col('#1f4e8c'));
-      face(tb, cx + ux * 0.037, y, cz + uz * 0.037, ux, uz, 1.0, 0.25, ST.special.paradero);
-      face(tb, cx - ux * 0.037, y, cz - uz * 0.037, -ux, -uz, 1.0, 0.25, ST.special.paradero);
-      const bxp = x + ux * 1.6 + nx * 0.15, bzp = z + uz * 1.6 + nz * 0.15;
-      bench(near, bxp, bzp, ux, uz, -nx, -nz); addSolid(c, rectPoly(bxp, bzp, ux, uz, 0.9, 0.22), 0.8, 'bench');
+      const y = KERB + 2.45;
+      bx(mid, x, y, z, 1.02, 0.27, 0.07, ux, uz, col('#1f4e8c'));
+      face(tb, x - nx * 0.037, y, z - nz * 0.037, -nx, -nz, 1.0, 0.25, ST.special.paradero);
+      face(tb, x + nx * 0.037, y, z + nz * 0.037, nx, nz, 1.0, 0.25, ST.special.paradero);
+      if (bs.ww >= 1.75) {   // back to the facade, clear of the walking line (0.75 m from the kerb)
+        const bxp = x + ux * 1.6 + nx * (bs.ww - 0.62), bzp = z + uz * 1.6 + nz * (bs.ww - 0.62);
+        if (!insideBld(bxp + nx * 0.25, bzp + nz * 0.25) || bs.ww >= 2.5) { bench(near, bxp, bzp, ux, uz, -nx, -nz); addSolid(c, rectPoly(bxp, bzp, ux, uz, 0.9, 0.22), 0.8, 'bench'); }
+      }
       if (owned.has(bs.e.i)) paintRange(mid, bs.e, bs.side, bs.s - 8, bs.s + 8, YEL);
     }
     for (const sg of c.stops) {
@@ -2148,6 +2152,20 @@ function buildWorld() {
       if (sg.kind === 'stop') {   // white stop line across the approach (right half on two-way streets)
         const e = sg.e, p = edgePoint(e, sg.s), rx = -fz, rz = fx, a0 = e.o === 0 ? 0.1 : -e.w / 2 + 0.3, a1 = e.w / 2 - 0.3;
         ribbon(mid, [{ x: p.x + rx * a0, z: p.z + rz * a0 }, { x: p.x + rx * a1, z: p.z + rz * a1 }], 0.4, 0.035, WHT);
+      }
+    }
+    for (const bm of c.bumps) {   // [OSM] speed bump: yellow/black ridge across the carriageway
+      const e = bm.e, p = edgePoint(e, bm.s), rx = -p.dz, rz = p.dx; let k = 0;
+      for (let o = -e.w / 2 + 0.1; o < e.w / 2 - 0.3; o += 0.5, k++) bx(mid, p.x + rx * (o + 0.25), 0.045, p.z + rz * (o + 0.25), 0.5, 0.09, 0.9, rx, rz, k % 2 ? BLK : YEL);
+    }
+    for (const xg of c.xings) {   // school crossing: zebra (as at signals in buildMarkings) + school-zone warning signs
+      const e = xg.e, p = edgePoint(e, xg.s), nx = -p.dz, nz = p.dx;
+      for (let k = -e.w / 2 + 0.4; k < e.w / 2 - 0.3; k += 1.0) ribbon(mid, [{ x: p.x + nx * k - p.dx * 1.4, z: p.z + nz * k - p.dz * 1.4 }, { x: p.x + nx * k + p.dx * 1.4, z: p.z + nz * k + p.dz * 1.4 }], 0.5, 0.032, WHT);
+      for (const sg of xg.signs) {
+        const y = KERB + 2.3, R = ST.special.school;
+        prism(mid, sg.x, KERB, sg.z, 0.035, 0.035, y - KERB, 5, METAL);
+        face(tb, sg.x - sg.fx * 0.04, y, sg.z - sg.fz * 0.04, -sg.fx, -sg.fz, 0.75, 0.75, R[0]);
+        face(tb, sg.x - sg.fx * 0.025, y, sg.z - sg.fz * 0.025, sg.fx, sg.fz, 0.75, 0.75, R[1]);
       }
     }
     const bol = (W.landmarks.park || [])[0];
@@ -2250,18 +2268,25 @@ function buildWorld() {
     for (const [dx, dz] of [[330, -280], [-260, -330], [30, -48], [0, 40], [50, 0]]) ST.excl.push({ x: ST.P0.x + dx, z: ST.P0.z + dz, r: 30 });
     ST.excl.push({ x: -520, z: 60, r: 30 });
     if (SAVE.pos) ST.excl.push({ x: SAVE.pos.x, z: SAVE.pos.z, r: 12 });
-    // atlas: street names that exist in the data, specials, generic shops (2 variants each), OSM POIs
+    // atlas: street names that exist in the data (prefix + number pieces), specials, 24 generic shops, OSM POIs
     const names = [...new Set(W.edges.map(e => e.name).filter(Boolean))].sort();
     const pois = layoutPois();
-    const signs = [{ draw: drawSpecial, sub4: true }, { draw: drawParadero }];
-    GENERIC.forEach(([label, nm, bg, fg], i) => { signs.push({ main: nm.toUpperCase(), sub: '', bg, fg }); signs.push({ main: nm, sub: label + ' · ' + TAGLINES[i % TAGLINES.length], bg: fg === '#ffffff' ? '#f7f5ee' : bg, fg: fg === '#ffffff' ? bg : fg }); });
+    const plateItems = [], seen = new Set(), specOf = new Map();
+    for (const nm of names) {
+      const sp = plateSpec(nm); specOf.set(nm, sp);
+      const parts = sp && sp.pre ? [['pre', sp.pre], ['num', sp.num]] : [['full', nm.toUpperCase()]];
+      for (const [kind, text] of parts) { const key = kind + ':' + text; if (!seen.has(key)) { seen.add(key); plateItems.push({ key, kind, text }); } }
+    }
+    const signs = [{ draw: drawSpecial, sub4: true }, { draw: drawParadero }, { draw: drawSchool, sub4: true }];
+    GENERIC.forEach(([label, nm, bg, fg], i) => signs.push({ main: nm, sub: label + ' · ' + TAGLINES[i % TAGLINES.length], bg, fg }));
     for (const p of pois) signs.push(p.d);
-    const cells = buildAtlas(names, signs, L.low);
-    ST.special = { signs: cells[0], paradero: cells[1] };
-    ST.genCells = cells.slice(2, 2 + GENERIC.length * 2);
-    pois.forEach((p, i) => { p.R = cells[2 + GENERIC.length * 2 + i]; const m = { x: (p.f.p.x + p.f.q.x) / 2, z: (p.f.p.z + p.f.q.z) / 2 }; chunkAt(m.x, m.z).pois.push(p); });
+    const { cells, plateUV } = buildAtlas(plateItems, signs, L.low);
+    for (const nm of names) { const sp = specOf.get(nm); ST.plateCells.set(nm, sp && sp.pre ? { pre: plateUV.get('pre:' + sp.pre), num: plateUV.get('num:' + sp.num) } : { full: plateUV.get('full:' + nm.toUpperCase()) }); }
+    ST.special = { signs: cells[0], paradero: cells[1], school: cells[2] };
+    ST.genCells = cells.slice(3, 3 + GENERIC.length);
+    pois.forEach((p, i) => { p.R = cells[3 + GENERIC.length + i]; const m = { x: (p.f.p.x + p.f.q.x) / 2, z: (p.f.p.z + p.f.q.z) / 2 }; chunkAt(m.x, m.z).pois.push(p); });
     ST.stats.pois = pois.length;
-    layoutPoles(); layoutPlates(); layoutPoints();
+    layoutPoles(); layoutPlates(); layoutPoints(); layoutCalming();
     // bucket the rest by chunk
     for (const e of W.edges) { const m = edgePoint(e, e.L / 2); chunkAt(m.x, m.z).edges.push(e); }
     for (const b of W.buildings) chunkAt(b.c.x, b.c.z).bldgs.push(b);
@@ -5770,19 +5795,20 @@ function settingsMenu() {
   card(`<h1>Ajustes</h1>${settingsHtml()}`); bindSettings(titleMenu);
 }
 function creditsHtml() {
-  const nb = W.buildings.length, ms = W.buildings.filter(b => b.s === 'm').length, ow = W.edges.filter(e => e.o !== 0).length, est = D.roads.filter(r => r.we).length;
+  const nb = W.buildings.length, ms = W.buildings.filter(b => b.s === 'm').length, nc = W.buildings.filter(b => b.s === 'c').length, ow = W.edges.filter(e => e.o !== 0).length, est = D.roads.filter(r => r.we).length;
   return `<h2>Fuentes</h2>
   <p class="small">Datos del mapa © colaboradores de OpenStreetMap, disponibles bajo la licencia ODbL 1.0 (openstreetmap.org/copyright). Extracto del ${D.meta.osm_timestamp.slice(0, 10)}.</p>
+  <p class="small">Construcciones y número de pisos: Alcaldía de Palmira, Base de Datos Catastral 2024; semaforización: Alcaldía de Palmira 2020–2024 (datos.gov.co, CC BY-SA 4.0 según publicación; licencia pendiente de confirmación).</p>
   <p class="small">Huellas de edificios © Microsoft, Global ML Building Footprints (${D.meta.msft_release.split(',')[0].replace('Global ML Building Footprints ', '')}), licencia CDLA-Permissive-2.0.</p>
   <p class="small">Proyección local Transversa de Mercator centrada en el Parque Bolívar · 1 unidad = 1 metro.</p>
   <h2>Qué tan fiel es</h2>
   <div class="fid">
-    <i style="background:#2f7d4f"></i><span><strong>Verificado (fuente abierta):</strong> trazado de ${D.roads.length} vías, nombres de calles y carreras, ${ow} tramos con sentido único documentado, ${D.signals.length} semáforos, parques, ubicación y forma de los lugares conocidos.</span>
-    <i style="background:#f4c430"></i><span><strong>Estimado:</strong> anchos de ${est} vías (por tipo de vía), alturas de los ${nb} edificios (por tamaño de huella; ninguna fuente abierta trae alturas aquí), terreno plano. Las huellas grandes se dividieron en lotes de ~11 m y se recortaron para dejar andenes de 2,2 m.</span>
+    <i style="background:#2f7d4f"></i><span><strong>Verificado (fuente abierta):</strong> huella y número de pisos de ${nc} construcciones (catastro), trazado de ${D.roads.length} vías, nombres de calles y carreras, ${ow} tramos con sentido único documentado, ${D.signals.length} semáforos, parques, ubicación y forma de los lugares conocidos.</span>
+    <i style="background:#f4c430"></i><span><strong>Estimado:</strong> anchos de ${est} vías (por tipo de vía), altura de los ${ms} edificios que no están en el catastro (por tamaño de huella), altura por piso (3,1 m), terreno plano. Las huellas del catastro se recortaron 0,9 m donde invadían la calzada estimada.</span>
     <i style="background:#e98a3b"></i><span><strong>Aproximado:</strong> fachadas (texturas genéricas originales), volumen de la Catedral, torres de las iglesias, CAMP, graderías del estadio, senderos y palmas del Parque Bolívar. Nombres de sector en pantalla: conjuntos y barrios de OSM cuando existen; si no, “Centro”/“La Galería” por cercanía o el nombre de un parque cercano (aproximado).</span>
     <i style="background:#7c5ba6"></i><span><strong>Pendiente:</strong> perímetro urbano oficial, capa oficial de barrios y comunas, cartografía IGAC 1:1.000, fotos propias de fachadas y señales.</span>
   </div>
-  <p class="small">${nb} edificios (${ms} de Microsoft, ${nb - ms} de OSM). Personajes, negocios, la “Patrulla Urbana”, la marca Valerio, el “Almanaque del Valle”, los mensajes del teléfono y los diálogos son ficticios; no representan a personas, marcas ni instituciones reales. Expresiones y costumbres pendientes de revisar con gente de Palmira.</p>
+  <p class="small">${nb} edificios (${nc} del catastro, ${ms} de Microsoft, ${nb - ms - nc} de OSM). Personajes, negocios, la “Patrulla Urbana”, la marca Valerio, el “Almanaque del Valle”, los mensajes del teléfono y los diálogos son ficticios; no representan a personas, marcas ni instituciones reales. Expresiones y costumbres pendientes de revisar con gente de Palmira.</p>
   <p class="small">Emisoras ficticias (Caña FM, La Recta, Valle Stéreo, Noticias del Valle): música y voces sintetizadas en el navegador, sin grabaciones. Interfaz original; tipografías Bungee, Barlow y Barlow Condensed (SIL Open Font License, vía Google Fonts).</p>
   ${G.started ? '' : '<div class="row"><button class="btn" id="cBack" type="button">Volver</button></div>'}`;
 }
