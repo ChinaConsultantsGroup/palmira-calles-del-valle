@@ -89,6 +89,11 @@ osm = json.load(open(RAW / CFG["osm"]))
 els = osm["elements"]
 print("OSM", osm["osm3s"]["timestamp_osm_base"], len(els))
 
+# real street widths (property line to property line) measured against the Alcaldía cadastre blocks
+WIDTHS = {}
+if (RAW / "official" / "roads_width.json").exists():
+    WIDTHS = json.load(open(RAW / "official" / "roads_width.json")).get("ways", {})
+
 # ---------------------------------------------------------------- roads + graph
 roads, ped = [], []
 node_xy, node_use = {}, collections.Counter()
@@ -120,6 +125,9 @@ for e in els:
     o = 1 if ow in ("yes", "true", "1") else -1 if ow == "-1" else 0
     if t.get("junction") == "roundabout" and ow is None:
         o = 1
+    mw = WIDTHS.get(str(e["id"]))
+    if hw in CAR and w_est and mw and mw.get("quality") in ("good", "fair") and not mw.get("separador") and mw.get("carriageway_m"):
+        w, w_est = max(4.0, min(w * 1.9, max(w * 0.8, float(mw["carriageway_m"])))), 2   # 2 = measured from cadastre blocks
     rec = dict(id=e["id"], hw=hw, name=t.get("name", ""), w=w, w_est=w_est, o=o, nodes=e["nodes"], pts=pts,
                lanes=t.get("lanes"), surface=t.get("surface"), maxspeed=t.get("maxspeed"))
     (roads if hw in CAR else ped).append(rec)
@@ -477,6 +485,18 @@ if (RAW / "osm_extra.json").exists():
 
 # ---------------------------------------------------------------- places (barrio names), waterways, railways
 places, water, rail = [], [], []
+# barrios reconstructed from cadastre block codes + names voted from geolocated Alcaldía records (labels, not legal limits)
+if (RAW / "official" / "barrios.geojson").exists():
+    for f in json.load(open(RAW / "official" / "barrios.geojson"))["features"]:
+        pr = f["properties"]
+        if not pr.get("name") or pr.get("name_quality") not in ("good", "fair"):
+            continue
+        g = f["geometry"]; rings = [g["coordinates"]] if g["type"] == "Polygon" else g["coordinates"]
+        for rg in rings:
+            for q in polys(make_valid(Polygon([P(x, y) for x, y in rg[0]])).intersection(AREA)):
+                ro = ring_out(q, 2.0)
+                if ro:
+                    places.append({"n": pr["name"], "b": 1, **ro})
 WATER_W = {"river": 14, "canal": 5, "stream": 4, "ditch": 1.6, "drain": 1.6}
 for e in els:
     t = e.get("tags", {})
