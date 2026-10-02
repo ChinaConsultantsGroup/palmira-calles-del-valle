@@ -1,6 +1,7 @@
 """Palmira HTML game: turn raw OSM + Microsoft footprints into compact game data.
 
-Inputs (raw, kept outside the repo):  osm.json (Overpass `out geom`), msft_centro.geojsonl
+Inputs (raw, kept outside the repo): Overpass `out geom` JSON + Microsoft footprints geojsonl.
+Env: PALMIRA_SCOPE=centro|ciudad selects input files, play area and output name.
 Output: ../game/palmira_centro.json
 
 Coordinates: local Transverse Mercator centred on Parque Bolívar (GRS80, k=1),
@@ -19,12 +20,19 @@ from shapely import make_valid
 from pyproj import Transformer, CRS
 
 RAW = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".")
-OUT = pathlib.Path(__file__).resolve().parent.parent / "game" / "palmira_centro.json"
+import os
+SCOPE = os.environ.get("PALMIRA_SCOPE", "centro")
+CFG = {
+    "centro": dict(osm="osm.json", msft="msft_centro.geojsonl", area=(-1500, -1450, 1500, 1500), out="palmira_centro.json"),
+    # whole urban area of Palmira (DANE cabecera ~25 km2 sits inside this box) plus a margin of cane fields
+    "ciudad": dict(osm="osm_city.json", msft="msft_city.geojsonl", area=(-4700, -3400, 4900, 5100), out="palmira.json"),
+}[SCOPE]
+OUT = pathlib.Path(__file__).resolve().parent.parent / "game" / CFG["out"]
 LAT0, LON0 = 3.5274, -76.3007
 LOC = CRS.from_proj4(f"+proj=tmerc +lat_0={LAT0} +lon_0={LON0} +k=1 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs")
 T = Transformer.from_crs(4326, LOC, always_xy=True)
 # play area (metres, local): a little inside the downloaded bbox so nothing is cut at the edge
-AREA = box(-1500, -1450, 1500, 1500)
+AREA = box(*CFG["area"])
 
 CAR = {"motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential",
        "living_street", "service", "trunk_link", "primary_link", "secondary_link", "tertiary_link"}
@@ -77,7 +85,7 @@ def hrand(s, n=1):
     return int(hashlib.md5(s.encode()).hexdigest()[:8], 16) % n
 
 
-osm = json.load(open(RAW / "osm.json"))
+osm = json.load(open(RAW / CFG["osm"]))
 els = osm["elements"]
 print("OSM", osm["osm3s"]["timestamp_osm_base"], len(els))
 
@@ -162,6 +170,24 @@ for e in els:
             best = min(range(len(gnodes)), key=lambda i: (gnodes[i][0] / 10 - x) ** 2 + (gnodes[i][1] / 10 - y) ** 2)
             if math.dist((gnodes[best][0] / 10, gnodes[best][1] / 10), (x, y)) < 15:
                 signals.append(best)
+# official signalised crossings (Alcaldía de Palmira, datos.gov.co 6hkg-wtby) — much more complete than OSM
+OFFICIAL = RAW / "official"
+signal_el = []
+if (OFFICIAL / "semaforos.geojson").exists():
+    sem = json.load(open(OFFICIAL / "semaforos.geojson"))
+    gn_tree = STRtree([Point(x / 10, y / 10) for x, y in gnodes])
+    n_off = 0
+    for f in sem["features"]:
+        x, y = P(*f["geometry"]["coordinates"][:2])
+        if f["properties"].get("feature") == "crossing":
+            if f["properties"].get("position_check", "ok") != "ok":
+                continue
+            i = gn_tree.nearest(Point(x, y))
+            if math.dist((gnodes[i][0] / 10, gnodes[i][1] / 10), (x, y)) < 30:
+                signals.append(int(i)); n_off += 1
+        elif AREA.contains(Point(x, y)):
+            signal_el.append([f["properties"].get("kind", ""), dm(x), dm(y)])
+    print("official signal crossings snapped", n_off, "elements", len(signal_el))
 signals = sorted(set(signals))
 print("graph nodes", len(gnodes), "edges", len(edges), "signals", len(signals))
 
@@ -175,7 +201,10 @@ print("blocks", len(blocks))
 ped_out = []
 for r in ped:
     if r["hw"] in ("pedestrian", "footway", "steps") and LineString(r["pts"]).length > 3:
-        ped_out.append({"w": round(r["w"], 1), "t": r["hw"][0], "p": flat(LineString(r["pts"]).intersection(AREA).coords) if LineString(r["pts"]).within(AREA) else flat(r["pts"]), "n": r["name"]})
+        clip = LineString(r["pts"]).intersection(AREA)
+        for part in (clip.geoms if hasattr(clip, "geoms") else [clip]):
+            if part.geom_type == "LineString" and part.length > 3:
+                ped_out.append({"w": round(r["w"], 1), "t": r["hw"][0], "p": flat(part.coords), "n": r["name"]})
 
 # ---------------------------------------------------------------- areas: parks, landmarks
 parks, landuse, landmarks = [], [], []
@@ -232,7 +261,7 @@ for e in els:
 osm_tree = STRtree([p for p, _, _ in osm_b]) if osm_b else None
 
 ms_b = []
-for i, line in enumerate(open(RAW / "msft_centro.geojsonl")):
+for i, line in enumerate(open(RAW / CFG["msft"])):
     g = json.loads(line)
     pts = [P(x, y) for x, y in g["geometry"]["coordinates"][0]]
     p = make_valid(Polygon(pts))
@@ -240,6 +269,29 @@ for i, line in enumerate(open(RAW / "msft_centro.geojsonl")):
         if pp.area > 6 and AREA.contains(pp.centroid):
             ms_b.append((pp, i))
 print("osm bldgs", len(osm_b), "msft bldgs", len(ms_b))
+
+# Alcaldía de Palmira cadastre 2024 (LC_Construccion_ON): real footprints and number of floors. Wins over OSM/Microsoft.
+cat_b, manz = [], []
+if (OFFICIAL / "catastro_construcciones.geojson").exists():
+    cj = json.load(open(OFFICIAL / "catastro_construcciones.geojson"))
+    for f in cj["features"]:
+        g = f["geometry"]; pr = f["properties"]
+        rings = [g["coordinates"]] if g["type"] == "Polygon" else g["coordinates"]
+        for rg in rings:
+            pts = [P(x, y) for x, y in rg[0]]
+            if len(pts) < 4:
+                continue
+            for pp in polys(make_valid(Polygon(pts))):
+                if pp.area > 4 and AREA.contains(pp.centroid):
+                    cat_b.append((pp, pr))
+    del cj
+    for f in json.load(open(OFFICIAL / "catastro_manzanas.geojson"))["features"]:
+        g = f["geometry"]; rings = [g["coordinates"]] if g["type"] == "Polygon" else g["coordinates"]
+        for rg in rings:
+            manz.extend(polys(make_valid(Polygon([P(x, y) for x, y in rg[0]]))))
+cat_tree = STRtree([p for p, _ in cat_b]) if cat_b else None
+manz_tree = STRtree(manz) if manz else None
+print("catastro parts", len(cat_b), "manzanas", len(manz))
 
 lm_polys = {l["k"]: Polygon([(l["p"][i] / 10, l["p"][i + 1] / 10) for i in range(0, len(l["p"]), 2)]) for l in landmarks}
 park_poly = lm_polys.get("park")
@@ -304,16 +356,17 @@ SIDEWALK = 2.2  # m kept free between kerb and facades (footprints are ML-detect
 sidewalk_band = road_buf.buffer(SIDEWALK, quad_segs=2)
 
 
-def add_bldg(p, src, key, h, hs, st, kind, split=True):
+def add_bldg(p, src, key, h, hs, st, kind, split=True, band=None):
+    band = sidewalk_band if band is None else band
     if park_poly is not None and park_poly.buffer(-1).contains(p.centroid):
         return
-    if p.intersects(sidewalk_band):
-        trimmed = [q for q in polys(make_valid(p.difference(sidewalk_band))) if q.area > 10]
+    if p.intersects(band):
+        trimmed = [q for q in polys(make_valid(p.difference(band))) if q.area > (4 if src == 'c' else 10)]
         if not trimmed:
             return
         if len(trimmed) > 1 or trimmed[0].area < p.area * 0.999:
             for n, q in enumerate(trimmed):
-                add_bldg(q, src, f"{key}~{n}" if len(trimmed) > 1 else key, h, hs, st, kind, split)
+                add_bldg(q, src, f"{key}~{n}" if len(trimmed) > 1 else key, h, hs, st, kind, split, band)
             return
     if split and hs == "est" and p.area > 450 and kind in ("yes", "house", "residential", "commercial", "retail", "apartments"):
         for n, (q, edge) in enumerate(subdivide(p)):
@@ -323,15 +376,32 @@ def add_bldg(p, src, key, h, hs, st, kind, split=True):
             hq = (3.6 + r * 1.0) if stq == 1 else stq * 3.1 + 0.8 + r * 0.5
             ro = ring_out(q, 0.2)
             if ro:
-                bld_out.append({**ro, "hgt": dm(hq), "st": stq, "s": src, "hs": "est", "k": kind, "id": k2, "sub": 1})
+                bld_out.append({**ro, "hgt": dm(hq), "st": stq, "s": src, "k": kind, **({"id": k2} if src == "o" else {})})
         return
     ro = ring_out(p, 0.2)
     if ro:
-        bld_out.append({**ro, "hgt": dm(h), "st": st, "s": src, "hs": hs, "k": kind, "id": key})
+        bld_out.append({**ro, "hgt": dm(h), "st": st, "s": src, "k": kind, **({"hs": hs} if hs != "est" else {}), **({"id": key} if src == "o" else {})})
 
 
 dropped = collections.Counter()
+USO_KIND = {"Habitacional": "house", "Comercial": "commercial", "Industrial": "industrial", "Institucional": "public", "Educativo": "school",
+            "Religioso": "church", "Cultural": "public", "Salubridad": "public", "Uso_Publico": "public", "Recreacional": "public", "Agricola": "farm"}
+carriage_band = road_buf.buffer(0.9, quad_segs=2)   # cadastre outlines are surveyed: only trim what overlaps our (estimated-width) carriageway
+for n, (p, pr) in enumerate(cat_b):
+    fl = max(1, int(pr.get("floors") or 1))
+    kind = USO_KIND.get(pr.get("uso"), "yes")
+    if pr.get("tipo") == "no_convencional" and fl == 1:
+        kind = "shed"
+    h = fl * 3.1 + 0.8 if kind != "shed" else 3.0
+    add_bldg(p, "c", f"c{n}", h, "cat", fl, kind, split=False, band=carriage_band)
+def covered_by_cadastre(p):
+    if cat_tree is not None and any(cat_b[j][0].intersection(p).area > 0.25 * p.area for j in cat_tree.query(p)):
+        return True
+    return manz_tree is not None and any(manz[j].contains(p.centroid) for j in manz_tree.query(p.centroid))
 for p, t, wid in osm_b:
+    if covered_by_cadastre(p):
+        dropped["osm_in_cadastre"] += 1
+        continue
     if on_road(p):
         dropped["osm_on_road"] += 1
         continue
@@ -353,6 +423,9 @@ for p, t, wid in osm_b:
     add_bldg(p, "o", f"osm:way/{wid}", h, hs, st, kind)
 
 for p, i in ms_b:
+    if covered_by_cadastre(p):
+        dropped["ms_in_cadastre"] += 1
+        continue
     if osm_tree is not None:
         hit = [j for j in osm_tree.query(p) if osm_b[j][0].intersection(p).area > 0.3 * p.area]
         if hit:
@@ -361,7 +434,7 @@ for p, i in ms_b:
     if on_road(p):
         dropped["ms_on_road"] += 1
         continue
-    key = f"msft:032232031/{i}"
+    key = f"m{i}"
     kind = "yes"
     if "cathedral" in lm_polys and lm_polys["cathedral"].buffer(2).contains(p.centroid):
         dropped["ms_in_cathedral"] += 1  # cathedral is a hand-built landmark
@@ -375,7 +448,7 @@ for p, i in ms_b:
 print("buildings out", len(bld_out), dict(dropped))
 
 # ---------------------------------------------------------------- POIs & trees
-pois, trees = [], []
+pois, trees, pts_extra = [], [], {}
 for e in els:
     t = e.get("tags", {})
     if e["type"] == "node":
@@ -384,8 +457,41 @@ for e in els:
             continue
         if t.get("natural") == "tree":
             trees.append([dm(x), dm(y)])
+        elif t.get("highway") in ("bus_stop", "street_lamp", "give_way", "stop"):
+            pts_extra.setdefault(t["highway"], []).append([dm(x), dm(y)])
         elif t.get("name") and (t.get("amenity") or t.get("shop") or t.get("historic") or t.get("tourism")):
             pois.append({"n": t["name"], "t": t.get("amenity") or t.get("shop") or t.get("historic") or t.get("tourism"), "x": dm(x), "y": dm(y)})
+
+# ---------------------------------------------------------------- places (barrio names), waterways, railways
+places, water, rail = [], [], []
+WATER_W = {"river": 14, "canal": 5, "stream": 4, "ditch": 1.6, "drain": 1.6}
+for e in els:
+    t = e.get("tags", {})
+    if e["type"] == "node" and t.get("place") in ("neighbourhood", "suburb", "quarter") and t.get("name"):
+        x, y = P(e["lon"], e["lat"]); places.append({"n": t["name"], "x": dm(x), "y": dm(y)})
+    if e["type"] != "way" or "geometry" not in e:
+        continue
+    pts = [P(g["lon"], g["lat"]) for g in e["geometry"]]
+    if t.get("landuse") == "residential" and t.get("name") and pts[0] == pts[-1] and len(pts) > 3:
+        try:
+            poly = make_valid(Polygon(pts)).intersection(AREA)
+        except Exception:
+            continue
+        for q in polys(poly):
+            ro = ring_out(q, 1.0)
+            if ro and q.area > 5000:
+                places.append({"n": t["name"], **ro})
+    if t.get("waterway") in WATER_W:
+        line = LineString(pts).intersection(AREA)
+        for part in (line.geoms if hasattr(line, "geoms") else [line]):
+            if part.geom_type == "LineString" and part.length > 5:
+                water.append({"n": t.get("name", ""), "t": t["waterway"], "w": float(t.get("width", WATER_W[t["waterway"]]) or WATER_W[t["waterway"]]) if str(t.get("width", "")).replace(".", "", 1).isdigit() else WATER_W[t["waterway"]], "p": flat(part.simplify(0.5).coords)})
+    if t.get("railway") in ("rail", "disused", "abandoned"):
+        line = LineString(pts).intersection(AREA)
+        for part in (line.geoms if hasattr(line, "geoms") else [line]):
+            if part.geom_type == "LineString" and part.length > 5:
+                rail.append({"s": t["railway"][0], "p": flat(part.simplify(0.3).coords)})
+print("places", len(places), "water", len(water), "rail", len(rail))
 
 # ---------------------------------------------------------------- block surface kind + sidewalk walking rings
 bc_tree = STRtree([Polygon([(b["p"][i] / 10, b["p"][i + 1] / 10) for i in range(0, len(b["p"]), 2)]).centroid for b in bld_out])
@@ -398,29 +504,32 @@ for b in blocks:
     ro["g"] = 1 if (n_b == 0 and b.area > 2500) else 0      # empty large block -> grass/lot
     blocks_out.append(ro)
     if n_b > 0 and b.area > 300:
-        inner = b.buffer(-1.1, join_style=2)
+        inner = b.buffer(-0.75, join_style=2)
         for ip in polys(inner):
             if ip.exterior.length > 40:
                 walks.append(flat(list(ip.simplify(0.5).exterior.coords)[:-1]))
 print("walk rings", len(walks))
 
+BKINDS = ['yes'] + sorted({b['k'] for b in bld_out} - {'yes'})
 out = {
     "meta": {
         "name": "Palmira Centro", "units": "decimetres", "crs": LOC.to_proj4(),
         "origin": {"lat": LAT0, "lon": LON0, "label": "Parque Bolívar"},
         "osm_timestamp": osm["osm3s"]["timestamp_osm_base"],
-        "msft_release": "Global ML Building Footprints 2026-02-03, quadkey 032232031",
+        "msft_release": "Global ML Building Footprints 2026-02-03, quadkeys 032232031/032232033",
         "attribution": [
             "Map data © OpenStreetMap contributors, ODbL 1.0 (openstreetmap.org/copyright)",
             "Building footprints © Microsoft, Global ML Building Footprints, CDLA-Permissive-2.0",
+            "Construcciones y número de pisos: Alcaldía de Palmira, Base Catastral 2024 (datos.gov.co); semaforización: Alcaldía de Palmira (datos.gov.co) — CC BY-SA 4.0 según publicación, licencia pendiente de confirmación",
         ],
-        "area": [-1500, -1450, 1500, 1500],
+        "area": list(CFG["area"]),
     },
     "roads": [{"n": r["name"], "c": r["hw"], "w": round(r["w"], 1), "we": r["w_est"], "o": r["o"], "id": r["id"]} for r in roads],
     "gnodes": gnodes, "edges": edges, "signals": signals,
     "blocks": blocks_out, "walks": walks,
     "ped": ped_out, "parks": parks, "fields": landuse, "landmarks": landmarks,
-    "buildings": bld_out, "pois": pois, "trees": trees,
+    "bkinds": BKINDS, "buildings": [[b["p"], b["hgt"], b["st"], b["s"], BKINDS.index(b["k"]) if b["k"] in BKINDS else 0] + ([b["id"]] if "id" in b else []) for b in bld_out],
+    "signal_el": signal_el, "pois": pois, "trees": trees, "points": pts_extra, "places": places, "water": water, "rail": rail,
 }
 OUT.parent.mkdir(parents=True, exist_ok=True)
 OUT.write_text(json.dumps(out, separators=(",", ":"), ensure_ascii=False))
