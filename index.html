@@ -1374,21 +1374,26 @@ function buildGround() {
 // Any module can register static meshes: registerChunkMesh(mesh, bbox[x0,z0,x1,z1]); they are hidden beyond draw range.
 const CHUNK = 220;
 const CULL = { list: [], t: 0 };
-function registerChunkMesh(m, bb) { CULL.list.push({ m, bb }); }
+// range (optional) = a shorter visibility radius for things that are sub-pixel long before the fog (road markings)
+function registerChunkMesh(m, bb, range = 0) { CULL.list.push({ m, bb, r: range }); }
 function bboxDist(bb, x, z) { const dx = Math.max(bb[0] - x, 0, x - bb[2]), dz = Math.max(bb[1] - z, 0, z - bb[3]); return Math.hypot(dx, dz); }
-function drawRange() { return QL.fog[1] + 150; }
-function cullChunks(x, z) { const R = drawRange(); for (const c of CULL.list) c.m.visible = bboxDist(c.bb, x, z) < R; }
+// beyond ~0.93 fog.far everything is ≥ 98 % fog colour (65 only ever scales fog.far down), so media/alta stop streaming there
+function drawRange() { return QL.fog[1] + (QL.lvl === 1 || QL.lvl === 2 ? -60 : 150); }
+function cullChunks(x, z) { const R = drawRange(); for (const c of CULL.list) c.m.visible = bboxDist(c.bb, x, z) < (c.r && c.r < R ? c.r : R); }
+// static ground layers (sidewalks, markings, banks, water) are merged in 880 m cells on desktop tiers: ~12× fewer draw calls for
+// a few thousand triangles each; baja keeps 220 m cells (unchanged). Markings are hidden beyond MARK_R (sub-pixel there).
+const GCELL = QL.lvl > 0 ? 880 : CHUNK, MARK_R = [0, 480, 650, 0][QL.lvl] || 0;
 // a set of GB builders keyed by chunk; flush() turns each into a registered mesh
 class ChunkedGB {
-  constructor() { this.map = new Map(); }
-  at(x, z) { const k = Math.floor(x / CHUNK) + ':' + Math.floor(z / CHUNK); let c = this.map.get(k); if (!c) this.map.set(k, c = { gb: new GB(), bb: [Infinity, Infinity, -Infinity, -Infinity] }); return c; }
+  constructor(cell = CHUNK) { this.map = new Map(); this.cell = cell; }
+  at(x, z) { const k = Math.floor(x / this.cell) + ':' + Math.floor(z / this.cell); let c = this.map.get(k); if (!c) this.map.set(k, c = { gb: new GB(), bb: [Infinity, Infinity, -Infinity, -Infinity] }); return c; }
   grow(c, P) { for (const p of P) { if (p.x < c.bb[0]) c.bb[0] = p.x; if (p.z < c.bb[1]) c.bb[1] = p.z; if (p.x > c.bb[2]) c.bb[2] = p.x; if (p.z > c.bb[3]) c.bb[3] = p.z; } }
-  flush(mat, shadow = false) { let tris = 0; for (const c of this.map.values()) { if (!c.gb.count) continue; tris += c.gb.count; const m = addMesh(c.gb.build(), mat, shadow); registerChunkMesh(m, c.bb); } return tris; }
+  flush(mat, shadow = false, name = '', range = 0) { let tris = 0; for (const c of this.map.values()) { if (!c.gb.count) continue; tris += c.gb.count; const m = addMesh(c.gb.build(), mat, shadow); m.name = name; registerChunkMesh(m, c.bb, range); } return tris; }
 }
 
 // ---------------------------------------------------------------- blocks (raised sidewalks with kerbs) + parks + paving
 function buildBlocks() {
-  const CG = new ChunkedGB();
+  const CG = new ChunkedGB(GCELL);
   const gbAt = P => { const c = centroid(P), ch = CG.at(c.x, c.z); CG.grow(ch, P); return ch.gb; };
   const SIDEWALK = col('#b9b4a9'), KERBC = col('#d4d0c7'), GRASS = col('#7e9a52'), LOT = col('#a89f84');
   for (const b of W.blocks) {
@@ -1413,7 +1418,7 @@ function buildBlocks() {
       }
     }
   }
-  CG.flush(WORLD_MATS.ground = groundMaterial(), false);
+  CG.flush(WORLD_MATS.ground = groundMaterial(), false, 'ground');
 }
 function ribbon(gb, P, w, y, cl, startTrim = 0, endTrim = 0) {
   for (let i = 1; i < P.length; i++) {
@@ -1531,7 +1536,7 @@ function buildLandmarks() {
     const head = new THREE.SphereGeometry(0.42, 8, 6); head.translate(o.cx, KERB + 7.5, o.cz); mergeInto(gb, head, col('#4f5a4a'));
     LANDMARK_INFO.push({ n: 'Parque Bolívar', x: o.cx, z: o.cz, note: 'Trazado de senderos aproximado; estatua de Bolívar (1947)' });
   }
-  addMesh(gb.build(), MAT_FAC); addMesh(gbF.build(), MAT_FAC);
+  addMesh(gb.build(), MAT_FAC).name = 'lm_base'; addMesh(gbF.build(), MAT_FAC).name = 'lm_base';
 }
 function mergeInto(gb, geo, cl) {
   const g = geo.index ? geo.toNonIndexed() : geo; const p = g.attributes.position.array, n = g.attributes.normal.array;
@@ -1544,7 +1549,7 @@ function mergeInto(gb, geo, cl) {
 // ---------------------------------------------------------------- road markings (documented one-way -> white, two-way -> yellow centre line)
 function nodeDegree(n) { return allEdgesAt(n).length; }
 function buildMarkings() {
-  const CG = new ChunkedGB(), YEL = col('#e9c23a'), WHT = col('#ecebe6');
+  const CG = new ChunkedGB(GCELL), YEL = col('#e9c23a'), WHT = col('#ecebe6');
   const at = (p, q) => { const c = CG.at((p.x + q.x) / 2, (p.z + q.z) / 2); CG.grow(c, [p, q]); return c.gb; };
   for (const e of W.edges) {
     if (e.cls === 'service' || e.L < 14) continue;
@@ -1575,7 +1580,7 @@ function buildMarkings() {
       ribbon(at(s1, s2), [s1, s2], 0.35, 0.03, WHT);
     }
   }
-  CG.flush(WORLD_MATS.mark = markingMaterial(), false);
+  CG.flush(WORLD_MATS.mark = markingMaterial(), false, 'mark', MARK_R);
 }
 
 // ---------------------------------------------------------------- traffic signals (only at OSM-documented nodes)
@@ -1612,21 +1617,27 @@ function buildSignals() {
       for (let k = 0; k < 3; k++) lampPos.push({ x: x - fdx * 0.19, y: KERB + 4.0 - k * 0.38, z: z - fdz * 0.19, node: n, ax, k });
     }
   }
-  addMesh(poles.build(), MAT_V);
-  const g = new THREE.SphereGeometry(0.13, 8, 6);
+  addMesh(poles.build(), MAT_V).name = 'sig_poles';
+  // lamp heads sorted by distance from the centre: updateSignals draws only those that can be within ~320 m of the camera
+  for (const l of lampPos) l.dc = Math.hypot(l.x, l.z);
+  lampPos.sort((a, b) => a.dc - b.dc);
+  const g = QL.lvl === 1 || QL.lvl === 2 ? new THREE.SphereGeometry(0.13, 6, 4) : new THREE.SphereGeometry(0.13, 8, 6);   // 36 tris per head on media/alta
   const im = new THREE.InstancedMesh(g, new THREE.MeshBasicMaterial({ color: '#ffffff' }), Math.max(1, lampPos.length));
   const m4 = new THREE.Matrix4();
   lampPos.forEach((l, i) => { m4.makeTranslation(l.x, l.y, l.z); im.setMatrixAt(i, m4); im.setColorAt(i, new THREE.Color('#222')); });
-  im.count = lampPos.length; scene.add(im);
+  im.count = lampPos.length; im.name = 'sig_lamps'; scene.add(im);
   SIG.lamp = im; SIG.heads = lampPos;
 }
 const LAMP_ON = [new THREE.Color('#ff3b2f'), new THREE.Color('#ffb21f'), new THREE.Color('#38e06a')], LAMP_OFF = new THREE.Color('#2a2420');
 function updateSignals(t) {
   if (!SIG.lamp) return;
-  SIG.heads.forEach((l, i) => {
-    const s = signalState(l.node, l.ax, t), on = (l.k === 0 && s === 'r') || (l.k === 1 && s === 'y') || (l.k === 2 && s === 'g');
+  const R = Math.hypot(camera.position.x, camera.position.z) + 320, H = SIG.heads;   // heads are sorted by distance from the centre (see buildSignals)
+  let n = H.length; while (n > 0 && H[n - 1].dc > R) n--;
+  SIG.lamp.count = n;
+  for (let i = 0; i < n; i++) {
+    const l = H[i], s = signalState(l.node, l.ax, t), on = (l.k === 0 && s === 'r') || (l.k === 1 && s === 'y') || (l.k === 2 && s === 'g');
     SIG.lamp.setColorAt(i, on ? LAMP_ON[l.k] : LAMP_OFF);
-  });
+  }
   SIG.lamp.instanceColor.needsUpdate = true;
 }
 
@@ -1656,9 +1667,9 @@ function setGpsLine(pts) {
 
 // ---------------------------------------------------------------- waterways (Río Palmira, Zanjón Romero, canals) and railway, from OSM
 function buildWaterRail() {
-  const CG = new ChunkedGB(), WATER = col('#4f6b5c'), BANK = col('#9a9584'), BALLAST = col('#7b6f62'), STEEL = col('#5c5f61'), SLEEPER = col('#5a4636'), OVERGROWN = col('#6f7d4a');
+  const CG = new ChunkedGB(GCELL), WATER = col('#4f6b5c'), BANK = col('#9a9584'), BALLAST = col('#7b6f62'), STEEL = col('#5c5f61'), SLEEPER = col('#5a4636'), OVERGROWN = col('#6f7d4a');
   const at = (p, q) => { const c = CG.at((p.x + q.x) / 2, (p.z + q.z) / 2); CG.grow(c, [p, q]); return c.gb; };
-  const CGW = QL.lvl > 0 ? new ChunkedGB() : CG;   // water surface in its own reflective material (media and up)
+  const CGW = QL.lvl > 0 ? new ChunkedGB(GCELL) : CG;   // water surface in its own reflective material (media and up)
   const atW = (p, q) => { const c = CGW.at((p.x + q.x) / 2, (p.z + q.z) / 2); CGW.grow(c, [p, q]); return c.gb; };
   let banks = 0;
   for (const wv of (D.water || [])) {
@@ -1688,8 +1699,8 @@ function buildWaterRail() {
       for (let s2 = 0; s2 < L; s2 += 0.65) { const p = { x: a.x + dx / L * s2, z: a.z + dz / L * s2 }; ribbon(g, [{ x: p.x - dx / L * 0.12, z: p.z - dz / L * 0.12 }, { x: p.x + dx / L * 0.12, z: p.z + dz / L * 0.12 }], 2.4, y + 0.04, SLEEPER); }
     }
   }
-  CG.flush(MAT_V, false);
-  if (CGW !== CG) CGW.flush(WORLD_MATS.water = waterMaterial(), false);
+  CG.flush(MAT_V, false, 'banks');
+  if (CGW !== CG) CGW.flush(WORLD_MATS.water = waterMaterial(), false, 'water');
   return banks;
 }
 
@@ -1722,8 +1733,9 @@ function buildWorld() {
 
 const BQ = (() => {
   const force = (/[?&]bq=(\w+)/.exec(location.search) || [])[1];   // test override: ?bq=baja|media|alta (detail LOD only)
-  const baja = force ? force === 'baja' : QL === Q.baja, alta = force ? force === 'alta' : QL === Q.alta;
-  return { baja, S: baja ? 256 : alta ? 512 : 384, hq: !baja, R: baja ? 110 : 180, light: baja };
+  const lvl = force ? ({ baja: 0, media: 1, alta: 2, ultra: 3 }[force] ?? QL.lvl) : QL.lvl, baja = lvl === 0, alta = lvl >= 2;
+  // R = detail ring radius: media 150 (the cheap/detail swap is hard to spot beyond that), alta 180, ultra 220
+  return { baja, S: baja ? 256 : alta ? 512 : 384, hq: !baja, R: [110, 150, 180, 220][lvl], light: baja };
 })();
 
 // ---------------------------------------------------------------- facade atlas (procedural, original artwork)
@@ -2124,7 +2136,7 @@ function bWalls(gb, P, y0, y1, cl, fz, kY, plainZ, isExp, inward) {
 // Chunks are grouped at load (cheap) and their geometry is built only when the player approaches,
 // earlier in the direction of travel. HOOKS.replacesBuilding(b) lets detailed landmark models remove generic ones.
 const BCH = { map: new Map(), built: 0, tris: 0 };
-const DCELL = 165;
+const DCELL = QL.lvl > 0 ? 110 : 165;   // smaller detail cells on desktop: the shadow pass and the frustum cull drop whole cells, so less off-screen geometry
 const DET = { cells: new Map(), built: new Set(), job: null, R: BQ.R, tris: 0, ms: 0, stats: null };
 function groupBuildings() {
   const add = (map, k, b) => { let c = map.get(k); if (!c) map.set(k, c = { list: [], bb: [Infinity, Infinity, -Infinity, -Infinity], mesh: null, cx: 0, cz: 0 }); c.list.push(b); c.bb[0] = Math.min(c.bb[0], b.bb[0]); c.bb[1] = Math.min(c.bb[1], b.bb[1]); c.bb[2] = Math.max(c.bb[2], b.bb[2]); c.bb[3] = Math.max(c.bb[3], b.bb[3]); };
@@ -2146,7 +2158,7 @@ function buildBuildingChunk(c) {
     bWalls(gb, b.P, I.y0, h + I.parapet, I.wall, I.fz, I.kY, I.plainZ);
     gb.cap(b.P, null, I.tile ? h + I.parapet : h, shade(I.roofC, 0.92 + 0.16 * hash(I.hsh)), false, I.roofZ);
   }
-  c.mesh = addMesh(gb.build(), MAT_FAC); c.mesh.customDepthMaterial = DEPTH_FAC; BCH.built++; BCH.tris += gb.count;
+  c.mesh = addMesh(gb.build(), MAT_FAC); c.mesh.name = 'bld_cheap'; c.mesh.customDepthMaterial = DEPTH_FAC; BCH.built++; BCH.tris += gb.count;
 }
 
 // ---------------------------------------------------------------- detailed LOD
@@ -2407,11 +2419,11 @@ function streamDetail(x, z, ms) {
   need.sort((p, q) => p[0] - q[0]);
   const skip = HOOKS.replacesBuilding;
   while (performance.now() - t0 < ms) {
-    if (!DET.job) { const nx = need.find(p => !p[1].mesh); if (!nx) break; need.splice(need.indexOf(nx), 1); const c = nx[1]; DET.job = { c, i: 0, gb: new DGB(c.list.length * 300), dens: clamp(150 / c.list.length, 0.35, 1) }; }
+    if (!DET.job) { const nx = need.find(p => !p[1].mesh); if (!nx) break; need.splice(need.indexOf(nx), 1); const c = nx[1]; DET.job = { c, i: 0, gb: new DGB(c.list.length * 300), dens: clamp(150 * (DCELL / 165) * (DCELL / 165) / c.list.length, 0.35, 1) }; }
     const J = DET.job, L = J.c.list;
     while (J.i < L.length && performance.now() - t0 < ms) { const b = L[J.i++]; if (!(skip && skip(b))) buildDetailBuilding(J.gb, b, J.dens); }
     if (J.i >= L.length) {
-      const m = new THREE.Mesh(J.gb.build(), MAT_FAC); m.castShadow = QL.shadow > 0; m.receiveShadow = QL.shadow > 0; m.matrixAutoUpdate = false; m.customDepthMaterial = DEPTH_FAC;
+      const m = new THREE.Mesh(J.gb.build(), MAT_FAC); m.castShadow = QL.shadow > 0; m.receiveShadow = QL.shadow > 0; m.matrixAutoUpdate = false; m.customDepthMaterial = DEPTH_FAC; m.name = 'bld_detail';
       scene.add(m); J.c.mesh = m; J.c.tris = J.gb.count; DET.tris += J.c.tris; DET.built.add(J.c); DET.job = null;
     }
   }
@@ -2456,8 +2468,8 @@ DET.bench = () => { const t = performance.now(); let n = 0; for (const c of DET.
     stats: { built: 0, disposed: 0, tris: 0, poles: 0, polesSkipped: 0, plates: 0, wallPlates: 0, pois: 0, poiSkipped: 0, xings: 0, bumps: 0, atlas: '', cat: {} },
   };
   const lvl = () => {
-    const low = IS_TOUCH || QL === Q.baja, high = !low && QL === Q.alta;
-    return { low, high, far: low ? 280 : high ? 650 : 450, mid: low ? 200 : high ? 420 : 300, near: low ? 150 : high ? 300 : 200, cars: low ? 12 : high ? 50 : 22, motos: low ? 20 : high ? 80 : 30,
+    const low = IS_TOUCH || QL.lvl === 0, high = !low && QL.lvl >= 2, ultra = high && QL.lvl >= 3;
+    return { low, high, far: low ? 280 : ultra ? 800 : high ? 560 : 450, mid: low ? 200 : ultra ? 500 : high ? 420 : 300, near: low ? 150 : ultra ? 360 : high ? 300 : 200, cab: low ? 280 : ultra ? 400 : high ? 240 : 200, cars: low ? 12 : ultra ? 50 : high ? 40 : 22, motos: low ? 20 : ultra ? 80 : high ? 64 : 30,
       seg: low ? 5 : 8, budget: low ? 2.5 : 4, shop: low ? 0.6 : 1, signs: low ? 90 : high ? 320 : 180 };
   };
   const H = (...a) => { let h = 2166136261; for (const v of a) { h ^= Math.round(v * 97) | 0; h = Math.imul(h, 16777619); } return hash(h >>> 0); };
@@ -2506,7 +2518,9 @@ DET.bench = () => { const t = performance.now(); let n = 0; for (const c of DET.
   // merge a non-indexed vehicle/prop BufferGeometry with yaw a (three.js rotation.y convention) and a colour tint
   function mergeGeo(gb, geo, x, y, z, a, tint) {
     const P = geo.attributes.position.array, N = geo.attributes.normal.array, C = geo.attributes.color.array, F = geo.attributes.fac && geo.attributes.fac.array, ca = Math.cos(a), sa = Math.sin(a);
+    const glyph = gb.l && F ? (typeof VM !== 'undefined' ? VM.GLYPH : 10) : -1;   // plate glyph blocks: the vehicle material discards them anyway, so parked vehicles drop those triangles
     for (let i = 0; i < P.length; i += 3) {
+      if (i % 9 === 0 && F && F[i] === glyph) { i += 6; continue; }
       const lx = P[i], lz = P[i + 2], nx = N[i], nz = N[i + 2];
       gb.p.push(x + lx * ca + lz * sa, y + P[i + 1], z - lx * sa + lz * ca);
       gb.n.push(nx * ca + nz * sa, N[i + 1], -nx * sa + nz * ca);
@@ -2522,6 +2536,13 @@ DET.bench = () => { const t = performance.now(); let n = 0; for (const c of DET.
   class VehGB extends GB {
     constructor() { super(); this.l = []; this.bd = []; }
     build() { const g = super.build(); g.setAttribute('vloc', new THREE.Float32BufferAttribute(this.l, 3)); g.setAttribute('vbend', new THREE.Float32BufferAttribute(this.bd, 3)); return g; }
+  }
+  // parked vehicles are the heaviest street geometry (~600 tris each): on desktop tiers a chunk keeps them in 2×2 quadrant
+  // builders (220 m) so the range test, the frustum and the shadow pass drop whole quadrants instead of the 440 m chunk
+  class QuadGB {
+    constructor(cell, n) { this.cell = cell; this.n = n; this.parts = []; for (let i = 0; i < n * n; i++) this.parts.push(new VehGB()); }
+    at(x, z) { const n = this.n, s = this.cell; if (n === 1) return this.parts[0]; const i = clamp(Math.floor((x - s[0]) / (s[2] - s[0]) * n), 0, n - 1), j = clamp(Math.floor((z - s[1]) / (s[3] - s[1]) * n), 0, n - 1); return this.parts[j * n + i]; }
+    get count() { let c = 0; for (const p of this.parts) c += p.count; return c; }
   }
   // VEH_MAT[0] reads object-space 'position' (static merged meshes are in world space): same shader, fed from vloc/vbend
   let PARK_MAT = null;
@@ -3109,7 +3130,7 @@ DET.bench = () => { const t = performance.now(); let n = 0; for (const c of DET.
     let dir = e.o !== 0 ? e.o : side; let fx = p.dx * dir, fz = p.dz * dir;
     if (angled) { const ca = Math.cos(0.61), sa = Math.sin(0.61); fx = fx * ca - nx * sa; fz = fz * ca - nz * sa; }
     let a = Math.atan2(-fz, fx); if (kind !== 'car') a += (H(seed, 5) - 0.5) * 0.18;
-    mergeGeo(gbN, parkedGeo(kind === 'car' ? type : 'moto', t.fixed || tintHex), x, 0, z, a, [1, 1, 1]);
+    mergeGeo(gbN.at ? gbN.at(x, z) : gbN, parkedGeo(kind === 'car' ? type : 'moto', t.fixed || tintHex), x, 0, z, a, [1, 1, 1]);
     const cf = Math.cos(a), sf = -Math.sin(a);
     addSolid(c, rectPoly(x, z, cf, sf, t.L / 2, t.Wd / 2), 1.4, kind === 'car' ? 'car' : 'moto');
     occAdd(occ, e, side, s - hl, s + hl);
@@ -3137,9 +3158,9 @@ DET.bench = () => { const t = performance.now(); let n = 0; for (const c of DET.
   const pickCar = r => { let v = r * 100; for (const [t, w] of CAR_MIX) { if ((v -= w) < 0) return t; } return 'sedan'; };
 
   function* buildChunk(c) {
-    const L = lvl(), far = new GB(), mid = new GB(), near = new GB(), veh = new VehGB(), tb = new TB(), occ = new Map();
+    const L = lvl(), far = new GB(), mid = new GB(), near = new GB(), veh = new QuadGB(c.cell, L.low ? 1 : 2), cab = new GB(), tb = new TB(), occ = new Map();
     const owned = new Set(c.edges.map(e => e.i)), cnt = { cars: 0, motos: 0, signs: 0 }, cat = ST.stats.cat;
-    let mark = 0; const tally = k => { const n = far.count + mid.count + near.count + veh.count + tb.count; cat[k] = (cat[k] || 0) + n - mark; mark = n; };
+    let mark = 0; const tally = k => { const n = far.count + mid.count + near.count + veh.count + cab.count + tb.count; cat[k] = (cat[k] || 0) + n - mark; mark = n; };
     const motoRow = (e, s, side, n, seed) => {   // a row of motos at the kerb in front of a shop
       if (!owned.has(e.i)) return;
       const angled = e.o !== 0 && e.w >= 7, step = angled ? 0.95 : 2.15;
@@ -3152,10 +3173,11 @@ DET.bench = () => { const t = performance.now(); let n = 0; for (const c of DET.
     // poles, cables, drops
     for (const p of c.poles) addPole(far, p, L);
     tally('poles');
-    for (const p of c.poles) addDrops(far, p, L);
+    // desktop tiers: cables and drops (2 cm thick) get their own short-range mesh (L.cab): sub-pixel beyond that, and no shadow (sub-texel noise on alta)
+    for (const p of c.poles) addDrops(L.low ? far : cab, p, L);
     tally('drops');
     yield;
-    for (const [a, b] of c.spans) addSpan(far, a, b, L);
+    for (const [a, b] of c.spans) addSpan(L.low ? far : cab, a, b, L);
     tally('cables');
     yield;
     for (const pl of c.plates) addPlate(mid, tb, pl);
@@ -3327,18 +3349,23 @@ DET.bench = () => { const t = performance.now(); let n = 0; for (const c of DET.
       const geo = g.build(), m = new THREE.Mesh(geo, mat);
       m.castShadow = shadow && QL.shadow > 0; m.receiveShadow = QL.shadow > 0; m.matrixAutoUpdate = false; scene.add(m);
       geo.computeBoundingBox(); const B = geo.boundingBox; c.bb = [Math.min(c.bb[0], B.min.x), Math.min(c.bb[1], B.min.z), Math.max(c.bb[2], B.max.x), Math.max(c.bb[3], B.max.z)];
+      m.userData.bb = [B.min.x, B.min.z, B.max.x, B.max.z];   // own footprint (per-mesh range test)
       ST.stats.tris += g.count; return m;
     };
-    c.far = mk(far, MAT_V_DS, L.high); c.mid = mk(mid, MAT_V_DS, false); c.near = mk(near, MAT_V, true); c.veh = mk(veh, parkedMat(), true); c.atlas = mk(tb, ST.mat, false);
-    c.tris = far.count + mid.count + near.count + veh.count + tb.count; c.state = 2; ST.stats.built++;
+    c.far = mk(far, MAT_V_DS, L.high); c.mid = mk(mid, MAT_V_DS, false); c.near = mk(near, MAT_V, true); c.vehs = veh.parts.map(q => mk(q, parkedMat(), true)).filter(Boolean); c.cab = mk(cab, MAT_V_DS, false); c.atlas = mk(tb, ST.mat, false);
+    for (const k of ['far', 'mid', 'near', 'cab', 'atlas']) if (c[k]) c[k].name = 'street_' + k;
+    for (const m of c.vehs) m.name = 'street_veh';
+    c.tris = far.count + mid.count + near.count + veh.count + cab.count + tb.count; c.state = 2; ST.stats.built++;
   }
   function dispose(c) {
-    for (const k of ['far', 'mid', 'near', 'veh', 'atlas']) { const m = c[k]; if (m) { scene.remove(m); m.geometry.dispose(); c[k] = null; } }
+    for (const k of ['far', 'mid', 'near', 'cab', 'atlas']) { const m = c[k]; if (m) { scene.remove(m); m.geometry.dispose(); c[k] = null; } }
+    for (const m of c.vehs || []) { scene.remove(m); m.geometry.dispose(); } c.vehs = [];
     for (const o of c.solids) gridRemove(bGrid, o);
     c.solids = []; c.bb = c.cell.slice(); c.state = 0; ST.stats.tris -= c.tris || 0; c.tris = 0; ST.stats.disposed++;
   }
+  function showVeh(c, px, pz, R) { for (const m of c.vehs || []) m.visible = bboxDist(m.userData.bb, px, pz) < R; }
   function schedule(px, pz) {
-    const L = lvl();
+    const L = lvl(); ST.px = px; ST.pz = pz;
     for (const c of ST.chunks.values()) {
       const d = bboxDist(c.bb, px, pz); c.d = d;
       if (c.state === 2) {
@@ -3346,7 +3373,8 @@ DET.bench = () => { const t = performance.now(); let n = 0; for (const c of DET.
         if (c.mid) c.mid.visible = d < L.mid;
         if (c.atlas) c.atlas.visible = d < L.mid;
         if (c.near) c.near.visible = d < L.near;
-        if (c.veh) c.veh.visible = d < L.near;
+        if (c.cab) c.cab.visible = d < L.cab;
+        showVeh(c, px, pz, L.near);
         if (d > L.far + 700 && (!ST.job || ST.job.c !== c)) dispose(c);
       } else if (c.state === 0 && d < L.far + 100) { c.state = 1; ST.queue.push(c); }
     }
@@ -3361,7 +3389,7 @@ DET.bench = () => { const t = performance.now(); let n = 0; for (const c of DET.
         ST.job = { c, it: buildChunk(c) };
       }
       let done; try { done = ST.job.it.next().done; } catch (err) { console.error('street chunk', ST.job.c.k, err); ST.job.c.state = 3; ST.job = null; continue; }
-      if (done) { const c = ST.job.c; ST.job = null; const d = c.d; if (c.far) c.far.visible = d < L.far; if (c.mid) c.mid.visible = d < L.mid; if (c.near) c.near.visible = d < L.near; if (c.veh) c.veh.visible = d < L.near; if (c.atlas) c.atlas.visible = d < L.mid; }
+      if (done) { const c = ST.job.c; ST.job = null; const d = c.d; if (c.far) c.far.visible = d < L.far; if (c.mid) c.mid.visible = d < L.mid; if (c.near) c.near.visible = d < L.near; if (c.cab) c.cab.visible = d < L.cab; showVeh(c, ST.px ?? ST.P0.x, ST.pz ?? ST.P0.z, L.near); if (c.atlas) c.atlas.visible = d < L.mid; }
     }
   }
 
@@ -3413,7 +3441,7 @@ DET.bench = () => { const t = performance.now(); let n = 0; for (const c of DET.
     HOOKS.addressOf = addressOf;
     HOOKS._street = ST;   // debug handle (read-only use)
     try { window.__street = ST; } catch (e) { }
-    HOOKS.streetStats = () => ({ ...ST.stats, chunks: [...ST.chunks.values()].filter(c => c.state === 2).length, visibleMeshes: [...ST.chunks.values()].reduce((n, c) => n + ['far', 'mid', 'near', 'veh', 'atlas'].filter(k => c[k] && c[k].visible).length, 0), lights: ST.lights.length, busStops: ST.busStops.length });
+    HOOKS.streetStats = () => ({ ...ST.stats, chunks: [...ST.chunks.values()].filter(c => c.state === 2).length, visibleMeshes: [...ST.chunks.values()].reduce((n, c) => n + ['far', 'mid', 'near', 'cab', 'atlas'].filter(k => c[k] && c[k].visible).length + (c.vehs || []).filter(m => m.visible).length, 0), lights: ST.lights.length, busStops: ST.busStops.length });
     // build the start area now (behind the loading screen) so the first frames are complete
     const s0 = SAVE.pos || { x: ST.P0.x + 30, z: ST.P0.z - 48 };
     schedule(s0.x, s0.z);
@@ -3444,7 +3472,7 @@ const VEG = {
   mat: null, matFar: null, tex: null, layers: [], trees: [], stats: {}, last: null, tier: 1,
 };
 // quality tier: 0 phones / baja, 1 media, 2 alta, 3 ultra (if the lighting engineer adds Q.ultra)
-function vegTier() { if (IS_TOUCH) return 0; if (typeof QL.lvl === 'number') return clamp(QL.lvl, 0, 3); if (QL === Q.baja) return 0; if (Q.ultra && QL === Q.ultra) return 3; return QL === Q.alta ? 2 : 1; }
+function vegTier() { return IS_TOUCH ? 0 : clamp(QL.lvl, 0, 3); }
 
 // ---------------------------------------------------------------- procedural leaf atlas (4 x 3 cells of 256 px)
 // 0 broad leaves · 1 fine samán leaflets · 2 palm frond · 3 flower clusters · 4 grass · 5 cane · 6 hedge · 7 bark/solid
@@ -3666,7 +3694,7 @@ class PointLayer {
     this.mesh = new THREE.InstancedMesh(this.geo, this.mat, cap); this.mesh.count = 0;
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3); this.mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
-    this.mesh.castShadow = !!this.o.shadow; this.mesh.receiveShadow = QL.shadow > 0; this.mesh.matrixAutoUpdate = false;
+    this.mesh.castShadow = !!this.o.shadow; this.mesh.receiveShadow = QL.shadow > 0; this.mesh.matrixAutoUpdate = false; this.mesh.name = 'veg_' + (this.o.name || 'pts');
     this.mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1);
     this.items.forEach((it, i) => { const k = Math.floor(it.x / this.cell) + ':' + Math.floor(it.z / this.cell); (this.grid.get(k) || this.grid.set(k, []).get(k)).push(i); });
     scene.add(this.mesh);
@@ -3690,7 +3718,7 @@ class TileLayer {
   constructor(geo, mat, opts, gen) { this.geo = geo; this.mat = mat; this.o = opts; this.gen = gen; this.tiles = new Map(); this.T = 16; this.pending = []; this.dirty = true;
     this.mesh = new THREE.InstancedMesh(geo, mat, opts.cap); this.mesh.count = 0; this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(opts.cap * 3), 3); this.mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
-    this.mesh.castShadow = false; this.mesh.receiveShadow = QL.shadow > 0; this.mesh.matrixAutoUpdate = false; this.mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1); this.mesh.visible = false;
+    this.mesh.castShadow = false; this.mesh.receiveShadow = QL.shadow > 0; this.mesh.matrixAutoUpdate = false; this.mesh.name = 'veg_' + (opts.name || 'tile'); this.mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1); this.mesh.visible = false;
     scene.add(this.mesh); }
   update(cx, cz, budget) {
     const T = this.T, R = this.o.R, i0 = Math.floor((cx - R) / T), i1 = Math.floor((cx + R) / T), j0 = Math.floor((cz - R) / T), j1 = Math.floor((cz + R) / T);
@@ -3788,7 +3816,7 @@ function buildTrees() {
   VEG.trees = trees;
   // geometry per species (near) + far impostors
   const near = [], farL = [], mat = VEG.mat = vegMaterial(false), matFar = VEG.matFar = vegMaterial(true);
-  const nearR = [95, 165, 240, 320][tier], shadow = tier >= 2 && QL.shadow > 0;
+  const nearR = [95, 165, 220, 320][tier], shadow = tier >= 2 && QL.shadow > 0;
   VEG.stats = { trees: trees.length, nearR, tris: {}, placeMs: Math.round(performance.now() - T0) };
   SPECIES.forEach((sp, i) => { const fb = new FB(); sp.build(fb, seeded(1000 + i * 77)); VEG.stats.tris[sp.id] = fb.tris; near.push(new PointLayer(fb.build(), mat, { cap: [450, 900, 1500, 2200][tier], shadow })); farL.push(new PointLayer(farGeometry(sp), matFar, { cap: 9000 })); });
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), pos = new THREE.Vector3(), Y = new THREE.Vector3(0, 1, 0);
@@ -3943,7 +3971,7 @@ let LMLIB = null;   // shared helpers + landmark geometry for 16_interiors.js (s
 
 {
   const G0 = KERB - 0.02;                      // building base, same as buildBuildings()
-  const HI = QL !== Q.baja;                    // fewer balusters / columns at "baja"
+  const HI = QL.lvl > 0;                    // fewer balusters / columns at "baja"
   const EN = (e, n) => ({ x: e, z: -n });      // data metres (East, North) -> world {x, z}
   const unit = (x, z) => { const l = Math.hypot(x, z) || 1; return { x: x / l, z: z / l }; };
   const SUN = [SUN_DIR.x, SUN_DIR.y, SUN_DIR.z];
@@ -5018,7 +5046,9 @@ let LMLIB = null;   // shared helpers + landmark geometry for 16_interiors.js (s
   // ------------------------------------------------------------ hook
   HOOKS.buildLandmarksDetailed = () => {
     const t0 = performance.now(), stats = { meshes: 0, tris: 0, by: {} };
-    const add = (gb, name, mat = MAT_V) => { if (!gb.count) return; stats.meshes++; stats.tris += gb.count; stats.by[name] = gb.count; MESHES[name] = addMesh(gb.build(), mat); };
+    const add = (gb, name, mat = MAT_V) => { if (!gb.count) return; stats.meshes++; stats.tris += gb.count; stats.by[name] = gb.count; MESHES[name] = addMesh(gb.build(), mat); MESHES[name].name = 'lm_' + name;
+      // range-cull like any chunk (monuments 2 km away were drawn every frame); interiors toggle market/cathedral exteriors themselves
+      if (!/^(market|cathedral)$/.test(name)) { const g = MESHES[name].geometry; g.computeBoundingBox(); const B = g.boundingBox; registerChunkMesh(MESHES[name], [B.min.x, B.min.z, B.max.x, B.max.z]); } };
     const run = (name, fn) => { try { fn(); } catch (e) { console.error('landmark ' + name, e); } };
     for (const L of (W.landmarks.cathedral || [])) run('cathedral', () => buildCathedral(L, add));
     for (const L of (W.landmarks.camp || [])) run('camp', () => buildCAMP(L, add));
@@ -5340,7 +5370,7 @@ let LMLIB = null;   // shared helpers + landmark geometry for 16_interiors.js (s
       if (I.built) return; const t0 = performance.now();
       try {
         const parts = I.name === 'galeria' ? buildGaleria(I) : buildCatedral(I); let tris = 0;
-        for (const [gb, mat] of parts) { if (!gb.count) continue; tris += gb.count; const m = addMesh(gb.build(), mat, mat === MAT_V); if (mat !== MAT_V) { m.castShadow = false; m.receiveShadow = false; } m.visible = false; if (mat === MAT_SHAFT) m.renderOrder = 2; I.meshes.push(m); }
+        for (const [gb, mat] of parts) { if (!gb.count) continue; tris += gb.count; const m = addMesh(gb.build(), mat, mat === MAT_V); m.name = 'interior'; if (mat !== MAT_V) { m.castShadow = false; m.receiveShadow = false; } m.visible = false; if (mat === MAT_SHAFT) m.renderOrder = 2; I.meshes.push(m); }
         I.tris = tris; console.info('interior', I.name, Math.round(performance.now() - t0) + 'ms', I.meshes.length, 'meshes', tris, 'tris');
       } catch (e) { console.error('interior ' + I.name, e); }
       I.built = true;
@@ -6944,7 +6974,7 @@ class Agent {
   constructor(type) {
     this.type = type; this.t = VTYPES[type];
     const look = agentLook(type); this.color = look.color; this.variant = look.variant;
-    this.mesh = makeVehicleMesh(type, this.color, this.variant);
+    this.mesh = makeVehicleMesh(type, this.color, this.variant); this.mesh.name = 'traffic';
     this.mesh.visible = false; scene.add(this.mesh);
     this.two = !!this.t.two; this.big = !!(this.t.bus || this.t.urban || this.t.chiva || this.t.canero || this.t.camion);
     this.hw = this.two ? (this.t.bici ? 0.3 : 0.36) : this.t.Wd / 2; this.hl = this.t.L / 2;
@@ -7744,7 +7774,7 @@ void humanPose(inout vec3 p, inout vec3 n) {
     const group = new THREE.Group(), meshes = [];
     for (let layer = 0; layer < 4; layer++) {
       const { mat, depth } = materials(layer, false, u), m = new THREE.Mesh(geo(layer), mat);
-      m.customDepthMaterial = depth; m.castShadow = QL.shadow > 0; m.frustumCulled = false; group.add(m); meshes.push(m);
+      m.customDepthMaterial = depth; m.castShadow = QL.shadow > 0; m.frustumCulled = false; m.name = 'rig' + layer; group.add(m); meshes.push(m);
     }
     const r = { group, meshes, u, set(o) {
       if (o.shirt !== undefined) u.uPalIdx.value.x = o.shirt; if (o.pants !== undefined) u.uPalIdx.value.y = o.pants; if (o.skin !== undefined) u.uPalIdx.value.z = o.skin; if (o.hair !== undefined) u.uPalIdx.value.w = o.hair;
@@ -7776,8 +7806,8 @@ function initPeds() {
   const mk = (layer, name) => {
     const g = H.geo(layer).clone(); for (const k in attr) g.setAttribute(k, attr[k]);
     const { mat, depth } = H.materials(layer, true, null), m = new THREE.InstancedMesh(g, mat, n);
-    m.customDepthMaterial = depth; m.castShadow = QL.shadow > 0; m.frustumCulled = false; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    scene.add(m); PEDS[name] = m; return m;
+    m.customDepthMaterial = depth; m.castShadow = QL.shadow > 0 && !(layer >= 2 && QL.lvl <= 2); m.frustumCulled = false;   // hats and hand props are below the media/alta shadow texel size (ultra keeps them) m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    m.name = 'peds_' + name; scene.add(m); PEDS[name] = m; return m;
   };
   mk(0, 'body'); mk(1, 'head'); mk(2, 'hat'); mk(3, 'prop');
   rngState = 99;
@@ -8021,7 +8051,7 @@ const PURSUIT = {
   clear() { this.heat = 0; this.level = 0; this.lkp = null; for (const p of this.patrols) { p.active = false; p.mesh.visible = false; } }
 };
 class Patrol {
-  constructor() { this.t = VTYPES.patrol; this.mesh = makeVehicleMesh('patrol'); this.mesh.visible = false; scene.add(this.mesh); this.R = this.t.Wd / 2 + 0.15; this.active = false; this.light = 0; }
+  constructor() { this.t = VTYPES.patrol; this.mesh = makeVehicleMesh('patrol'); this.mesh.name = 'patrol'; this.mesh.visible = false; scene.add(this.mesh); this.R = this.t.Wd / 2 + 0.15; this.active = false; this.light = 0; }
   spawn(x, z, a) { this.x = x; this.z = z; this.a = a; this.v = 0; this.vx = this.vz = 0; this.yawRate = 0; this.active = true; this.mesh.visible = true; this.path = null; this.repath = 0; this.fx = Math.cos(a); this.fz = -Math.sin(a); this.pitCD = 2; this.pitSide = 0; this.roll = 0; }
   update(dt, target, contact) {
     // pick a steering goal: player directly when in sight, otherwise follow a route to the last known position
@@ -8227,7 +8257,7 @@ function cbFxUpdate(dt) {
 // ---------------------------------------------------------------- meshes
 function cbInitMeshes() {
   const inst = (geo, mat, n, shadow) => {
-    const m = new THREE.InstancedMesh(geo, mat, n); m.frustumCulled = false; m.castShadow = !!shadow && QL.shadow > 0; m.visible = false;
+    const m = new THREE.InstancedMesh(geo, mat, n); m.name = 'combat'; m.frustumCulled = false; m.castShadow = !!shadow && QL.shadow > 0; m.visible = false;
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     for (let i = 0; i < n; i++) { m.setMatrixAt(i, CB_HIDE); m.setColorAt(i, _cbC.setRGB(1, 1, 1)); }
     scene.add(m); return m;
@@ -8382,7 +8412,7 @@ function cbHitActor(o, dmg, nx, nz, kind) {
 
 // ---------------------------------------------------------------- player: melee, aim, fire, pose
 function cbStartMelee() {
-  const w = G.walker; if (!w) return;
+  const w = G.walker; if (!w || !w.arms || !w.legs || !w.root) return;
   if (CB.atk) { if (CB.atk.t > CB.atk.m.hit) CB.queued = true; return; }
   const idx = CB.comboT > 0 ? (CB.combo + 1) % 3 : 0; CB.combo = idx;
   const tgt = cbPickTarget(w.x, w.z, w.a, 3.2, 1.2) || cbPickTarget(w.x, w.z, w.a, 1.9, Math.PI);
@@ -8455,7 +8485,7 @@ function cbPlayer(dt) {
   cbPose();
 }
 function cbPose() {
-  const w = G.walker; if (!w) return;
+  const w = G.walker; if (!w || !w.arms || !w.legs || !w.root) return;
   if (CB.gun && CB.gun.parent !== w.arms[1]) w.arms[1].add(CB.gun);
   if (CB.gun) CB.gun.visible = cbGunReady();
   let lean = 0;
@@ -10090,7 +10120,7 @@ const VEND = (() => {
     c.hash = chunkHash(c, h, rain); c.state = 2; c.n = n;
     if (!n) return;
     const g = gb.build(); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-    const m = new THREE.Mesh(g, vendorMat()); m.castShadow = QL.shadow > 0; m.receiveShadow = QL.shadow > 0; m.matrixAutoUpdate = false; m.frustumCulled = true; scene.add(m);
+    const m = new THREE.Mesh(g, vendorMat()); m.name = 'vendor_stalls'; m.castShadow = QL.shadow > 0; m.receiveShadow = QL.shadow > 0; m.matrixAutoUpdate = false; m.frustumCulled = true; scene.add(m);
     c.mesh = m; ST.built++;
   }
   function disposeChunk(c) { if (c.mesh) { scene.remove(c.mesh); c.mesh.geometry.dispose(); c.mesh = null; } c.state = 0; c.hash = null; }
@@ -10108,8 +10138,8 @@ const VEND = (() => {
     const tray = new GB(); tray.box(0.42, 1.0, 0, 0.5, 0.05, 0.4, col('#777')); for (let i = 0; i < 6; i++) { const b = new THREE.SphereGeometry(0.06, 6, 4); b.translate(0.28 + (i % 3) * 0.13, 1.08, -0.1 + Math.floor(i / 3) * 0.2); mergeInto(tray, b, WHITE); } tray.box(0.42, 1.08, 0, 0.012, 0.6, 0.012, col('#555'));
     const cart = new GB(); cartBase(cart, WHITE);
     const pile = new GB(); heap(pile, 0.8, 1.05, 0.02, 12, 0.08, WHITE, 0.45, 0.6);
-    const mk = (g, mat) => { const im = new THREE.InstancedMesh(g, mat, n); im.castShadow = QL.shadow > 0; im.frustumCulled = false; for (let i = 0; i < n; i++) { im.setMatrixAt(i, _m.makeScale(0, 0, 0)); im.setColorAt(i, new THREE.Color('#ffffff')); } scene.add(im); return im; };
-    DYN.body = mk(body.build(), MAT_V); DYN.head = mk(head, new THREE.MeshLambertMaterial({ color: '#ffffff' })); DYN.tray = mk(tray.build(), MAT_V); DYN.cart = mk(cart.build(), MAT_V); DYN.pile = mk(pile.build(), MAT_V);
+    const mk = (g, mat, small = false) => { const im = new THREE.InstancedMesh(g, mat, n); im.name = 'vendor_dyn'; im.castShadow = QL.shadow > 0 && !(small && QL.lvl === 1); im.frustumCulled = false; for (let i = 0; i < n; i++) { im.setMatrixAt(i, _m.makeScale(0, 0, 0)); im.setColorAt(i, new THREE.Color('#ffffff')); } scene.add(im); return im; };
+    DYN.body = mk(body.build(), MAT_V); DYN.head = mk(head, new THREE.MeshLambertMaterial({ color: '#ffffff' }), true); DYN.tray = mk(tray.build(), MAT_V, true); DYN.cart = mk(cart.build(), MAT_V); DYN.pile = mk(pile.build(), MAT_V, true);   // small parts: no shadow on media (below the 12 cm texel)
     for (let i = 0; i < n; i++) DYN.list.push({ i, active: false, sp: null, kind: null, x: 0, z: 0, a: 0, y: KERB, t: 0, st: 'idle', tgt: null, pauseT: 0, agent: null, offering: false });
   }
   function dynFree(reserve = 0) { let free = 0, pick = null; for (const d of DYN.list) if (!d.active) { free++; if (!pick) pick = d; } return free > reserve ? pick : null; }
@@ -10125,7 +10155,9 @@ const VEND = (() => {
   }
   function dynRelease(d) { if (d.sp && d.sp.dyn === d) d.sp.dyn = null; d.active = false; d.sp = null; }
   function dynWrite() {
+    let hi = 0;
     for (const d of DYN.list) {
+      if (d.active) hi = d.i + 1;
       if (!d.active) { _m.makeScale(0, 0, 0); for (const im of [DYN.body, DYN.head, DYN.tray, DYN.cart, DYN.pile]) im.setMatrixAt(d.i, _m); continue; }
       const bob = d.st === 'walk' || d.kind === 'flee' ? Math.abs(Math.sin(d.t * 9)) * 0.04 : 0;
       _q.setFromAxisAngle(_Y, d.a); _p.set(d.x, d.y + bob, d.z); _m.compose(_p, _q, _s1);
@@ -10134,7 +10166,7 @@ const VEND = (() => {
       _p.set(d.x, d.y, d.z); _m.compose(_p, _q, d.kind === 'cart' ? _s1 : _s0);
       DYN.cart.setMatrixAt(d.i, _m); DYN.pile.setMatrixAt(d.i, _m);
     }
-    for (const im of [DYN.body, DYN.head, DYN.tray, DYN.cart, DYN.pile]) im.instanceMatrix.needsUpdate = true;
+    for (const im of [DYN.body, DYN.head, DYN.tray, DYN.cart, DYN.pile]) { im.count = hi; im.instanceMatrix.needsUpdate = true; }   // idle slots cost nothing (count 0 = no draw)
   }
   function walkTo(d, tx, tz, v, dt) { const dx = tx - d.x, dz = tz - d.z, L = Math.hypot(dx, dz); if (L < 0.25) return true; const st = Math.min(L, v * dt); d.x += dx / L * st; d.z += dz / L * st; d.a = Math.atan2(-dz, dx); d.y = groundAt(d.x, d.z); d.st = 'walk'; return false; }
 
@@ -10909,7 +10941,7 @@ function pzStatsHtml() {
 }
 function settingsHtml() {
   return `<div class="grid2">
-    <label for="sQ">Calidad gráfica</label><select id="sQ"><option value="baja">Baja (móvil)</option><option value="media">Media</option><option value="alta">Alta</option></select>
+    <label for="sQ">Calidad gráfica</label><select id="sQ"><option value="baja">Baja (móvil)</option><option value="media">Media</option><option value="alta">Alta</option><option value="ultra">Ultra (PC potente)</option></select>
     <label for="sCam">Cámara</label><select id="sCam"><option value="persecucion">Persecución</option><option value="cerca">Cercana</option><option value="capo">Desde el asiento</option></select>
     <label for="sSens">Sensibilidad de dirección</label><input type="range" id="sSens" min="0.6" max="1.4" step="0.05">
     <label for="sSway">Balanceo de la carrocería</label><input type="range" id="sSway" min="0" max="1" step="0.05">
@@ -11641,7 +11673,7 @@ const ATM_CFG = {
 const ATMOS = (() => {
   const D2R = Math.PI / 180;
   const sst = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
-  const LOW = IS_TOUCH || QL === Q.baja;
+  const LOW = IS_TOUCH || QL.lvl === 0;
   const S = {
     hour: ATM_CFG.START_HOUR, dayOff: 0, date: null, elev: 45, night: 0, dl: 1, gold: 0,
     cover: 0.12, rain: 0, wet: 0, flash: 0, lampOn: 0, sched: null, force: null, label: '', hudKey: '',
@@ -11886,17 +11918,17 @@ const ATMOS = (() => {
     const glow = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), gm, N + 7);
     for (let i = 0; i < 7; i++) { glow.setMatrixAt(i, m4.makeScale(0, 0, 0)); glow.setColorAt(i, cTmp.setRGB(0, 0, 0)); }
     L.list.forEach((l, i) => { m4.makeScale(1.7, 1.7, 1.7).setPosition(l.x, l.y - 0.25, l.z); glow.setMatrixAt(i + 7, m4); glow.setColorAt(i + 7, cTmp.copy(l.c).multiplyScalar(1.6)); });
-    glow.frustumCulled = false; glow.renderOrder = 2; scene.add(glow); L.glow = glow;
+    glow.frustumCulled = false; glow.renderOrder = 2; glow.name = 'atm_glow'; scene.add(glow); L.glow = glow;
     // light pools on the ground (nearby lamps only, re-picked as the player moves)
     const pm = new THREE.ShaderMaterial({ uniforms: { uOn: { value: 0 }, uFar: { value: 260 } }, vertexShader: POOL_VS, fragmentShader: POOL_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
     L.pools = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), pm, LOW ? 180 : 420);
-    L.pools.count = 0; L.pools.frustumCulled = false; L.pools.renderOrder = 1; L.pools.setColorAt(0, SODIUM); scene.add(L.pools);
+    L.pools.count = 0; L.pools.frustumCulled = false; L.pools.renderOrder = 1; L.pools.name = 'atm_pools'; L.pools.setColorAt(0, SODIUM); scene.add(L.pools);
     // poles for the lamps this module placed (simple concrete pole + arm; ~22 tris each)
     const pg = new GB(), grey = col('#9a9892'), dark = col('#4a4c4e');
     pg.walls([{ x: -0.11, z: -0.11 }, { x: 0.11, z: -0.11 }, { x: 0.11, z: 0.11 }, { x: -0.11, z: 0.11 }], 0, 7.4, grey, false);
     pg.box(0.8, 7.25, 0, 1.7, 0.09, 0.09, dark); pg.box(1.6, 7.12, 0, 0.55, 0.12, 0.26, dark);
     L.poles = new THREE.InstancedMesh(pg.build(), MAT_V, LOW ? 260 : 700);
-    L.poles.count = 0; L.poles.frustumCulled = false; scene.add(L.poles);
+    L.poles.count = 0; L.poles.frustumCulled = false; L.poles.name = 'atm_poles'; scene.add(L.poles);
     // a few real lights near the player (constant count: no shader recompiles)
     for (let i = 0; i < (LOW ? 2 : 4); i++) { const p = new THREE.PointLight('#ffb870', 0, 26, 2); p.position.set(0, -50, 0); scene.add(p); L.pts.push(p); }
     const sp = new THREE.SpotLight('#fff0d6', 0, 60, 0.52, 0.55, 1); sp.position.set(0, -50, 0); scene.add(sp); scene.add(sp.target); L.spot = sp;
@@ -11938,6 +11970,7 @@ const ATMOS = (() => {
     } else { for (let i = 0; i < 4; i++) setSlot(i, 0, -99, 0, 0, 0, 0, 0); L.spot.intensity = 0; }
     // street lamps
     L.glow.material.uniforms.uOn.value = on; L.pools.material.uniforms.uOn.value = on;
+    L.glow.count = on > 0.002 ? L.list.length + 7 : 7;   // by day only the 7 car / sun / moon slots are drawn (the lamp glows would be 22k invisible triangles)
     if (Math.hypot(ctx.px - L.cx, ctx.pz - L.cz) > 110) refreshNear(ctx.px, ctx.pz);
     L.t -= dt;
     if (L.t <= 0) {
@@ -12055,7 +12088,7 @@ const ATMOS = (() => {
       m4.makeScale(w, h, 1).setPosition(x, 1300 + rand() * 900, z); im.setMatrixAt(i, m4);
       im.setColorAt(i, cTmp.setRGB(((i * 7) % n) / n * 0.95, rand(), 0));
     }
-    im.frustumCulled = false; im.renderOrder = 0; scene.add(im); C_.mesh = im;
+    im.frustumCulled = false; im.renderOrder = 0; im.name = 'atm_clouds'; scene.add(im); C_.mesh = im;
     // stars
     const ns = LOW ? 300 : 700, sp = new Float32Array(ns * 3);
     for (let i = 0; i < ns; i++) { const a = rand() * TAU, y = 0.06 + rand() * 0.94, r = Math.sqrt(1 - y * y); sp.set([Math.cos(a) * r * 25000, y * 25000, Math.sin(a) * r * 25000], i * 3); }
@@ -12599,15 +12632,8 @@ const ATMOS = (() => {
       tier: Object.keys(Q).find(k => Q[k] === QL), post: () => ({ on: P_.on, ok: P_.ok, msaa: P_.msaa, fxaa: !!P_.ldr, ms: +P_.ms.toFixed(2), w: P_.w, h: P_.h }),
       fitShadows(x, z) { updateSun(x, z); }, env: () => ENV.n, mats: WORLD_MATS, skip: false, debug: 0,
     };
-    addUltraOption();
-    try { new MutationObserver(addUltraOption).observe(document.getElementById('menu') || document.body, { childList: true, subtree: true }); } catch (e) { }
   }
-  // the settings menu (50_ui) lists baja/media/alta; add the desktop-only 'ultra' tier defined in 10_world's Q
-  function addUltraOption() {
-    const sel = document.getElementById('sQ'); if (!sel || sel.querySelector('option[value="ultra"]')) return;
-    const o = document.createElement('option'); o.value = 'ultra'; o.textContent = 'Ultra (PC potente)'; sel.appendChild(o);
-    if (SAVE.settings.quality === 'ultra') sel.value = 'ultra';
-  }
+  // 'ultra' is a permanent option of the settings menu (50_ui #sQ); no runtime injection needed any more
   let scanT = 5;
   function update(dt, ctx) {
     S.realT += dt; GFX_U.time.value = S.realT % 3600;
