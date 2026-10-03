@@ -5471,6 +5471,679 @@ let LMLIB = null;   // shared helpers + landmark geometry for 16_interiors.js (s
   }
 }
 
+// ===== 17_hero_blocks.js
+// Hero blocks: hand-specified facades for the places the owner's family knows — Corjuconi (Carrera 28 # 24-56),
+// the old Colegio Champagnat block (Calle 26 between Carreras 27 and 28) and the market streets round the Galería
+// Central (Calle 28 × Carreras 25–28). Registers HOOKS.buildHeroBlocks (runs after buildLandmarksDetailed and buildStreet).
+//
+// How it fits the engine (docs/hero_blocks_notes.md has the long version):
+//   * Footprints, storeys and uso come from the Alcaldía cadastre already in W.buildings. At module load (before
+//     buildBuildings() groups the chunks) the chosen parts are REMOVED from W.buildings — so neither the cheap LOD nor the
+//     detail ring draws them — but they are KEPT in bGrid, so collision, trees, vendors and pedestrians see the real lots.
+//   * Everything is drawn into a few merged GB meshes with MAT_FAC: wall planes carry plaster material coords (fac z = -2),
+//     and every window / shop opening is a real recess whose back quad is mapped onto the glass region of the facade atlas,
+//     so 65_atmosphere lights them at night exactly like the generic buildings. Sign lettering is one canvas atlas mesh.
+//   * Visible only within HERO_CFG.range (registerChunkMesh range), ≤ 6 draw calls, budget logged in HOOKS.heroStats.
+//   * Only the NAMED hero buildings go into LANDMARK_INFO (each entry becomes a map label and a 45 m street-prop exclusion
+//     zone in 12_street); the complete per-building fidelity table is HOOKS.heroBuildings.
+//
+// Sources (reference only, nothing traced): OpenStreetMap (ODbL) for street axes, the address-parity check (addr:* tags
+// listed in the notes) and the real shop name "Droguería Popular" (way 1489457052, Calle 28 # 25-50, building:levels 2);
+// Alcaldía de Palmira cadastre (footprints, floors, uso; licence pending confirmation); palmira.gov.co news item
+// "La Alcaldía de Palmira recuperó el sector del antiguo colegio Champagnat" (location: Calle 26 entre Cra 27 y 28);
+// El Tiempo archive MAM-837650 (the Marists' Champagnat de Palmira, 1972–78). No Google / Street View / Esri / Bing.
+// NO PHOTO of any of these buildings was available: every facade below is ESTIMATED / APPROXIMATED and marked
+// "pending photo verification". Family photos go to refs/user_photos/ — then edit HERO_SPECS only.
+
+// ================================================================= DATA TABLE — edit this when the photos arrive
+// Distances in metres. "s" positions along a frontage are measured from the end nearer the `from` street of the address
+// (Corjuconi: from the Calle 24 end, walking towards Calle 25). Colours are CSS hex. kind: 'metal' | 'wood' | 'glass'.
+const HERO_SPECS = {
+  corjuconi: {
+    name: 'Corjuconi', addr: 'Carrera 28 # 24-56',
+    // address grid walk (kept for the notes / sanity check): on `street`, `metres` from `from` towards `toward`; even = right-hand side
+    locate: { street: 'Carrera 28', from: 'Calle 24', toward: 'Calle 25', metres: 56, side: 'even' },
+    // the compound = these cadastre parts (a point inside each, E/N metres). VERIFIED against the family's drone photos
+    // (refs/user_photos 01, 02, 09, 10, 12, notas.txt, 2026-10-03): east side of Carrera 28, from #24-56 to the Calle 25 corner.
+    parts: {
+      room:   [128.8, -546.8],   // 1-floor room at #24-56 (83 m²): blue wall with two barred windows, grey fibre-cement roof
+      L:      [127.0, -535.0],   // 1-floor L (191 m²): north wing = CORNER volume (hipped clay-tile roof, tall doors); west strip = street wall + white gate; east wing = room
+      block2: [139.9, -539.0],   // 2-floor block (216 m², cadastre uso Educativo): sky blue, barred windows, grey fibre-cement gable roof with skylights
+      shed:   [134.3, -546.0],   // brick annex (20 m²): exposed brick, grey corrugated roof
+    },
+    cornerSplitN: -527.0,        // N (metres) where the L's corner volume ends and the street wall / terrace begins
+    gate: { fromN: -535.8, w: 3.6, h: 2.6 },   // white grid gate in the street wall (photo 10); N of its north jamb
+    wall: '#7fc4e6', frame: '#1f4e9c', white: '#f4f4f0', tile: '#a8573a', fibro: '#8c8c86', zinc: '#b9bcbd', brick: '#b5603a', terrace: '#9e3b2b', bar: '#1a1a1a',
+    streetWallH: 3.3, razorWire: true,
+    sign: { text: 'CORJUCONI', sub: 'Carrera 28 # 24-56', bg: '#1f4e9c', fg: '#ffffff' },   // board above the gate: ADDED at the family's request (no sign in the photos)
+    fidelity: 'Verificado con fotos propias de la familia (dron, 2026-10-03) + catastro: volúmenes, colores, cubiertas, portón, rejas. Letrero añadido a pedido',
+  },
+  champagnat: {
+    name: 'Antigua Escuela Champagnat', alias: 'escuela Champaña', closedFor: '> 20 años (abandonada)',
+    // block Calle 25 – Calle 26 × Carrera 27 – Carrera 28 (palmira.gov.co: "Calle 26 entre carreras 27 y 28"; family photos 05/06)
+    block: { calles: ['Calle 25', 'Calle 26'], carreras: ['Carrera 27', 'Carrera 28'] },
+    fallbackBlockEN: [122.2, -514.1, 136.1, -416.5, 221.0, -431.0, 209.4, -536.1],
+    gateStreet: 'Carrera 28', gateAt: 0.52,
+    height: 9.6, floors: 2,                               // photo 06: two tall classroom storeys + parapet (cadastre says 7 m)
+    wall: '#e3d3ae', pilaster: '#d9a79b', stain: '#7a6e5e', trim: '#efe6d2', door: '#3f4a3a', iron: '#2a2f2b',   // weathered cream / pink (photos 05, 06)
+    window: { w: 1.3, h: 2.1, sill: 0.9, every: 2.9, boardedShare: 0.3 },
+    sign: { text: 'ESCUELA CHAMPAGNAT', sub: '', bg: '#e3d3ae', fg: '#b9a98a' },   // faded lettering on the Calle 25 front (real former name)
+    court: { w: 15, l: 28, colour: '#8a8f86' },           // cracked basketball court in the patio (photo 05)
+    samanes: 2, grassTufts: 14,
+    construction: true,                                   // SW corner lot (Cra 28 × Cl 25) is a building site (photo 06): fence, mixer, rebar
+    extraShops: [{ at: [221, -530], name: 'Tejas y Techos', sub: 'Ferrolámina · Acero · Cubiertas', signBg: '#f2c200', signFg: '#1a1a1a', bays: ['open', 'open'], balcony: false, source: 'family photo 06 (real sign on the Cra 27 × Cl 25 corner)' }],
+    pare: { street: 'Carrera 28', before: 'Calle 25', metresBack: 7 },   // "PARE PARE" + arrows on the southbound approach (photo 02)
+    fidelity: 'Manzana y edificio en U: catastro (verificado). Fachada, cornisa, pilastras, patio con cancha y dos samanes: fotos de la familia 05/06 (2026-10-03). Edificio abandonado hace > 20 años',
+  },
+  galeria: {
+    name: 'Galería Central · locales', range: 250,
+    // hero street fronts: [street, from crossing, to crossing]; buildings with a wall facing these axes (≤ reach m) are rebuilt
+    segments: [['Calle 28', 'Carrera 28', 'Carrera 25'], ['Carrera 26', 'Calle 27', 'Calle 29'], ['Carrera 27', 'Calle 27', 'Calle 29'], ['Carrera 25', 'Calle 27', 'Calle 28']],
+    fallbackEN: { 'Calle 28': [163.3, -233.5, 442.1, -270.4], 'Carrera 26': [333.8, -346.6, 363.4, -170.2], 'Carrera 27': [238.5, -334.0, 271.3, -154.6], 'Carrera 25': [430.0, -358.0, 442.1, -270.4] },
+    reach: 14, maxBuildings: QL.lvl > 0 ? 140 : 90,
+    // per-lot overrides keyed by a point (E, N metres) inside / next to the lot
+    overrides: [
+      { at: [389, -252], name: 'Droguería Popular', sub: 'Droguería · Calle 28 # 25-50', bays: ['glass', 'glass', 'open'], wall: '#ffffff', signBg: '#d8262c', signFg: '#ffffff', balcony: false, awning: false, source: 'OSM way 1489457052 (ODbL): addr Calle 28 # 25-50, building:levels 2' },
+    ],
+    // invented generic market-street trades (no real brands) [INV]; shuffled per lot with a stable hash
+    trades: [
+      ['Carnes y Pollo La Esperanza', 'Res · Cerdo · Pollo', 'open'], ['Frutas y Verduras Don Jairo', 'Plaza · Al por mayor', 'open'], ['Abarrotes El Ahorro', 'Granos · Víveres', 'open'],
+      ['Cacharrería El Baratillo', 'Todo a mil', 'open'], ['Variedades Yesenia', 'Ropa · Calzado', 'glass'], ['Pollo Asado El Palmar', 'Broaster · Almuerzos', 'open'],
+      ['Restaurante El Corrientazo', 'Almuerzo ejecutivo', 'half'], ['Ferretería La Tuerca', 'Eléctricos · Plomería', 'half'], ['Panadería La Espiga', 'Pan caliente · Café', 'glass'],
+      ['Zapatería Paso Firme', 'Reparación de calzado', 'shut'], ['Celulares y Accesorios', 'Forros · Reparación', 'glass'], ['Papelería Mundo Escolar', 'Fotocopias · Internet', 'glass'],
+      ['Granero La 28', 'Arroz · Panela · Aceite', 'open'], ['Arepas y Empanadas', 'Desayunos', 'half'], ['Fritanga Doña Rosa', 'Chicharrón · Morcilla', 'open'],
+      ['Lácteos del Valle', 'Queso · Huevos', 'open'], ['Calzado Diana', 'Dama · Caballero · Niño', 'glass'], ['Plásticos y Desechables', 'Al detal y por mayor', 'open'],
+      ['Peluquería Estilos', 'Corte · Tinte', 'glass'], ['Pescadería La Costa', 'Pescado fresco', 'open'], ['Tienda Naturista Vida', 'Hierbas · Vitaminas', 'glass'],
+      ['Almacén de Telas Marta', 'Telas · Encajes', 'half'], ['Cafetería Las Delicias', 'Tinto · Pandebono', 'open'], ['Jugos Naturales El Oasis', 'Borojó · Lulo · Mango', 'open'],
+      ['Depósito de Plátano', 'Plátano · Yuca', 'open'], ['Repuestos Moto Center', 'Llantas · Aceite', 'half'], ['Salsamentaria La Vaquita', 'Quesos · Embutidos', 'open'],
+      ['Compraventa El Diamante', 'Oro · Electrodomésticos', 'shut'], ['Miscelánea La Bendición', 'Piñatería · Regalos', 'glass'], ['Lavandería Burbujas', 'Lavado al peso', 'shut'],
+      ['Herbolario y Esotéricos', 'Riegos · Esencias', 'half'], ['Cigarrería Donde Chucho', 'Licores · Hielo', 'open'],
+    ],
+    fidelity: 'Huellas y pisos: catastro (verificado). Locales, letreros (salvo Droguería Popular), balcones, toldos: aproximados',
+  },
+};
+const HERO_CFG = { range: 250, lod: QL.lvl, glow: false };   // glow: own additive night overlay (fallback if 65_atmosphere's window shader ever stops lighting hero recesses)
+
+{
+  const G0 = KERB - 0.02, HI = QL.lvl > 0;
+  const EN = (e, n) => ({ x: e, z: -n });
+  const unit = (x, z) => { const l = Math.hypot(x, z) || 1; return { x: x / l, z: z / l }; };
+  const litK = (nx, nz) => 0.84 + 0.16 * Math.max(0, nx * BAKE_DIR.x + nz * BAKE_DIR.z);
+  const C = (h) => col(h);
+  const PAL = {
+    walls: ['#f4efe2', '#f6e7b4', '#f2c35b', '#e9a04b', '#d9573f', '#7fb7c7', '#59a27a', '#f1d9c8', '#c9d8e8', '#efe3c4', '#e3e8d9', '#f0f0ea', '#e2b96a', '#a7c7b3'].map(col),
+    zoc: C('#6d7079'), alu: C('#c6c9cc'), bar: C('#262626'), barW: C('#e8e6e0'), sill: C('#e6e1d7'), box: C('#8b9093'), slab: C('#d8d4cb'), dark: C('#1b1d20'), conc: C('#a7a49c'),
+    ac: C('#e9e9e4'), acD: C('#9b9d9c'), brass: C('#c9a84c'), roof: ROOF_FLAT, pave: C('#b8b4a9'), green: C('#4f8a3a'),
+    awn: ['#c0392b', '#1f6f8b', '#2e8b57', '#d68910', '#f1c40f', '#e5e5e0', '#8e44ad', '#2c3e50'].map(col),
+    cloth: ['#d7263d', '#f2f2f2', '#1b998b', '#f4d35e', '#2e86ab', '#ee964b', '#7d5ba6'].map(col),
+    signs: [['#c8102e', '#ffffff'], ['#f2c200', '#1a1a1a'], ['#1f4e9a', '#ffffff'], ['#1e7f4f', '#ffffff'], ['#ffffff', '#c8102e'], ['#f28c28', '#1a1a1a'], ['#232323', '#f2c200'], ['#ffffff', '#1f4e9a']],
+  };
+
+  // ------------------------------------------------------------ small helpers
+  function info(n, x, z, note, extra) { for (let i = LANDMARK_INFO.length - 1; i >= 0; i--) if (LANDMARK_INFO[i].n === n) LANDMARK_INFO.splice(i, 1); LANDMARK_INFO.push(Object.assign({ n, x, z, note, hero: true }, extra || {})); }
+  const X = (a, b) => { try { const c = findCrossing(a, b); return c ? { x: c.x, z: c.z } : null; } catch (e) { return null; } };
+  const hsh = b => b.id ? strHash(b.id) : strHash(b.c.x.toFixed(1) + ',' + b.c.z.toFixed(1));
+  const rng = seed => { let r = seed >>> 0 || 1; return () => (r = (Math.imul(r, 1664525) + 1013904223) >>> 0) / 4294967296; };
+  const segDist = (x, z, a, b) => { const dx = b.x - a.x, dz = b.z - a.z, L2 = dx * dx + dz * dz || 1e-9; const t = clamp(((x - a.x) * dx + (z - a.z) * dz) / L2, 0, 1), px = a.x + dx * t, pz = a.z + dz * t; return { d: Math.hypot(x - px, z - pz), t, x: px, z: pz }; };
+  // wall frame along p -> q with outward normal (S = signedArea of the ring): A(s, y, d) = point s along, y absolute, d outward
+  function frameOf(p, q, S) {
+    const dx0 = q.x - p.x, dz0 = q.z - p.z, L = Math.hypot(dx0, dz0) || 1e-6, dx = dx0 / L, dz = dz0 / L;
+    const nx = S > 0 ? dz : -dz, nz = S > 0 ? -dx : dx;
+    return { p, q, L, dx, dz, nx, nz, A: (s, y, d) => [p.x + dx * s + nx * d, y, p.z + dz * s + nz * d], k: litK(nx, nz) };
+  }
+  const framesOf = P => { const S = signedArea(P), out = []; for (let i = 0; i < P.length; i++) { const F = frameOf(P[i], P[(i + 1) % P.length], S); if (F.L > 0.05) out.push(F); } return out; };
+  // outward quad on a frame, baked side light, optional facade coords
+  function wq(gb, F, s0, s1, y0, y1, d, cl, fac) {
+    const A = F.A, c = shade(cl, F.k);
+    gb.quad(A(s0, y0, d), A(s1, y0, d), A(s1, y1, d), A(s0, y1, d), [F.nx, 0, F.nz], c, fac && fac[0], fac && fac[1], fac && fac[2], fac && fac[3]);
+  }
+  const PLASTER = (s0, s1, y0, y1) => [[s0, y0, -2], [s1, y0, -2], [s1, y1, -2], [s0, y1, -2]];
+  // wall band [y0, y1] with rectangular openings [{s0, s1, y0, y1}] left open (plaster everywhere else)
+  function wallBand(gb, F, y0, y1, openings, cl) {
+    const ops = openings.filter(o => o.s1 > o.s0 + 0.02).sort((a, b) => a.s0 - b.s0);
+    let s = 0;
+    for (const o of ops) {
+      const a = Math.max(s, o.s0), b = Math.min(F.L, o.s1);
+      if (a > s + 0.01) wq(gb, F, s, a, y0, y1, 0, cl, PLASTER(s, a, y0, y1));
+      if (o.y0 > y0 + 0.01) wq(gb, F, a, b, y0, o.y0, 0, cl, PLASTER(a, b, y0, o.y0));
+      if (o.y1 < y1 - 0.01) wq(gb, F, a, b, o.y1, y1, 0, cl, PLASTER(a, b, o.y1, y1));
+      s = b;
+    }
+    if (s < F.L - 0.01) wq(gb, F, s, F.L, y0, y1, 0, cl, PLASTER(s, F.L, y0, y1));
+  }
+  // recess: back quad at -depth (facing out, optional atlas coords) + jambs + head + sill. With atlas coords the back quad's
+  // vertex colour is invisible on the glass (mask paint = 0) but seeds 65_atmosphere's per-window night hash (floor(vColor*61)),
+  // so each opening gets its own colour from its position: otherwise every hero window would share one random value.
+  let _glassSeed = 0;
+  function recess(gb, F, s0, s1, y0, y1, depth, clSide, clBack, fac) {
+    const A = F.A, n = [F.nx, 0, F.nz];
+    let back = shade(clBack, F.k);
+    if (fac) { const h = hash((Math.round((F.p.x + F.dx * s0) * 7) * 73856093 ^ Math.round((F.p.z + F.dz * s0) * 7) * 19349663 ^ Math.round(y0 * 13) * 83492791 ^ (_glassSeed++)) >>> 0); back = [0.2 + 0.6 * h, 0.2 + 0.6 * hash((h * 1e6) | 0), 0.2 + 0.6 * hash((h * 1e7) | 0)]; }
+    gb.quad(A(s0, y0, -depth), A(s1, y0, -depth), A(s1, y1, -depth), A(s0, y1, -depth), n, back, fac && fac[0], fac && fac[1], fac && fac[2], fac && fac[3]);
+    gb.quad(A(s0, y0, -depth), A(s0, y0, 0), A(s0, y1, 0), A(s0, y1, -depth), [F.dx, 0, F.dz], shade(clSide, 0.9));
+    gb.quad(A(s1, y0, -depth), A(s1, y0, 0), A(s1, y1, 0), A(s1, y1, -depth), [-F.dx, 0, -F.dz], shade(clSide, 0.8));
+    gb.quad(A(s0, y1, -depth), A(s1, y1, -depth), A(s1, y1, 0), A(s0, y1, 0), [0, -1, 0], shade(clSide, 0.7));
+    if (y0 > G0 + 0.05) gb.quad(A(s0, y0, -depth), A(s1, y0, -depth), A(s1, y0, 0), A(s0, y0, 0), [0, 1, 0], shade(clSide, 1.05));
+  }
+  // facade-atlas coords: upper-storey window glass (lit at night by 65_atmosphere) / shop ground-floor cell
+  const FAC_WIN = (style, gr) => { const z = 2 + (clamp(style, 0, 3) + 4 * (gr & 3)) / 100, x0 = 0.30 * 3.4, x1 = 0.70 * 3.4, y0 = 1.37 * 3.1, y1 = 1.77 * 3.1; return [[x0, y0, z], [x1, y0, z], [x1, y1, z], [x0, y1, z]]; };
+  const SHOP_CELL = { shut: 0, open: 1, half: 2, glass: 3 };
+  const FAC_SHOP = (kind, gr) => { const z = 1 + ((SHOP_CELL[kind] ?? 1) + 4 * (gr & 3)) / 100, x0 = 0.11 * 3.4, x1 = 0.89 * 3.4, y0 = 0.035 * 3.1, y1 = 0.845 * 3.1; return [[x0, y0, z], [x1, y0, z], [x1, y1, z], [x0, y1, z]]; };
+  function awning(gb, F, s0, s1, yTop, proj, cl, stripes) {
+    const A = F.A, y2 = yTop - 0.38, n = stripes ? 4 : 1, w = (s1 - s0) / n;
+    for (let i = 0; i < n; i++) {
+      const a = s0 + i * w, b = a + w, c = stripes && i % 2 ? shade(PAL.awn[5], 1) : cl;
+      gb.quad(A(a, yTop, 0.03), A(b, yTop, 0.03), A(b, y2, proj), A(a, y2, proj), [F.nx * 0.45, 1, F.nz * 0.45], shade(c, 1.0));
+      gb.quad(A(a, yTop - 0.01, 0.03), A(b, yTop - 0.01, 0.03), A(b, y2 - 0.01, proj), A(a, y2 - 0.01, proj), [-F.nx * 0.45, -1, -F.nz * 0.45], shade(c, 0.62));
+      gb.quad(A(a, y2, proj), A(b, y2, proj), A(b, y2 - 0.22, proj), A(a, y2 - 0.22, proj), [F.nx, 0, F.nz], shade(c, 0.9));   // valance
+    }
+  }
+  function windowUnit(gb, F, sc, hw, y0, y1, o) {   // framed recessed window; o = {wall, style, gr, reja, barC, light}
+    const s0 = sc - hw, s1 = sc + hw;
+    recess(gb, F, s0, s1, y0, y1, 0.16, o.wall, PAL.dark, FAC_WIN(o.style, o.gr));
+    glowQuad(F, s0 + 0.07, s1 - 0.07, y0 + 0.07, y1 - 0.07, -0.15, 0, Math.round(F.p.x * 3 + F.p.z * 7 + sc * 31 + y0 * 97));
+    const fr = PAL.alu, t = 0.055;
+    fBox(gb, F, s0, s1, y0, y0 + t, -0.1, -0.05, fr, true, 7); fBox(gb, F, s0, s1, y1 - t, y1, -0.1, -0.05, fr, false, 5);
+    fBox(gb, F, s0, s0 + t, y0, y1, -0.1, -0.05, fr, true, 1); fBox(gb, F, s1 - t, s1, y0, y1, -0.1, -0.05, fr, true, 1);
+    fBox(gb, F, sc - 0.02, sc + 0.02, y0, y1, -0.1, -0.06, fr, true, 1);   // mullion
+    fBox(gb, F, s0 - 0.1, s1 + 0.1, y0 - 0.06, y0, 0, 0.1, PAL.sill, false, 7);
+    if (o.reja) fBars(gb, F, s0 + 0.03, s1 - 0.03, y0 + 0.02, y1 - 0.02, 0.06, o.barC, o.light ? 0.24 : 0.15);
+  }
+  function balconyUnit(gb, F, s0, s1, y0, o, rnd) {   // slab + iron railing cage + door opening (+ laundry)
+    const d = 0.92;
+    fBox(gb, F, s0 - 0.08, s1 + 0.08, y0 - 0.14, y0, 0, d, PAL.slab, false, 15);
+    fBars(gb, F, s0 - 0.05, s1 + 0.05, y0, y0 + 1.0, d - 0.02, o.barC, o.light ? 0.2 : 0.13);
+    for (const ss of [s0 - 0.05, s1 + 0.05]) { for (const yy of [y0 + 0.02, y0 + 0.5, y0 + 0.97]) fBox(gb, F, ss - 0.012, ss + 0.012, yy, yy + 0.025, 0, d - 0.02, o.barC, true, 15); fBox(gb, F, ss - 0.015, ss + 0.015, y0, y0 + 1.0, d - 0.04, d - 0.0, o.barC, true, 15); }
+    const dc = (s0 + s1) / 2, dw = Math.min(0.75, (s1 - s0) / 2 - 0.35);
+    recess(gb, F, dc - dw, dc + dw, y0, y0 + 2.15, 0.15, o.wall, PAL.dark, FAC_WIN(o.style, o.gr));
+    glowQuad(F, dc - dw + 0.08, dc + dw - 0.08, y0 + 0.1, y0 + 2.05, -0.14, 0, Math.round(F.p.x * 5 + F.p.z * 11 + dc * 37 + y0 * 89));
+    fBox(gb, F, dc - dw - 0.06, dc + dw + 0.06, y0 + 2.15, y0 + 2.22, 0, 0.06, PAL.alu, false, 7);
+    if (!o.light && rnd() < 0.4) for (let s = s0 + 0.2, k = 0; s < s1 - 0.5 && k < 3; s += 0.5 + rnd() * 0.35, k++) { const w = 0.3 + rnd() * 0.25, hh = 0.4 + rnd() * 0.4, cl = PAL.cloth[Math.floor(rnd() * PAL.cloth.length)]; wq(gb, F, s, s + w, y0 + 0.98 - hh, y0 + 0.98, d + 0.02, cl); }
+  }
+  function acUnit(gb, F, s, y) { fBox(gb, F, s, s + 0.8, y, y + 0.52, 0, 0.3, PAL.ac); wq(gb, F, s + 0.08, s + 0.72, y + 0.08, y + 0.44, 0.305, PAL.acD); }
+
+  // ------------------------------------------------------------ night glow overlay (hero windows / shop bands)
+  // 65_atmosphere lights generic windows inside MAT_FAC from the facade coords; on these hand-built recesses that chunk stays
+  // dark (verified headless: forced uniforms light every generic window but none of ours), so the hero pass carries its own
+  // additive overlay: one quad per pane, switched per window by a threshold against a schedule copied from 65 (lit 0.42 until
+  // 22 h, shops 0.55 until 21 h), driven from HOOKS.timeOfDay in onBeforeRender. +1 draw call, ~2 tris per pane.
+  const GLOW = { pos: [], col: [], w: [], n: 0, U: { night: { value: 0 }, lit: { value: 0 }, shop: { value: 0 } } };
+  function glowQuad(F, s0, s1, y0, y1, d, kind, seed) {
+    if (s1 - s0 < 0.1 || y1 - y0 < 0.1) return;
+    const A = F.A, a = A(s0, y0, d), b = A(s1, y0, d), c = A(s1, y1, d), e = A(s0, y1, d), n = [F.nx, 0, F.nz];
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    const flip = (uy * vz - uz * vy) * n[0] + (uz * vx - ux * vz) * n[1] + (ux * vy - uy * vx) * n[2] < 0, V = flip ? [a, e, c, b] : [a, b, c, e];
+    const h1 = hash(seed >>> 0), h2 = hash((seed * 7919 + 13) >>> 0), warm = h2 < 0.82, k = 0.55 + 0.5 * hash((seed * 104729 + 7) >>> 0);
+    const cl = warm ? [1.0 * k, 0.66 * k, 0.34 * k] : [0.62 * k, 0.78 * k, 1.0 * k];
+    for (const i of [0, 1, 2, 0, 2, 3]) { GLOW.pos.push(...V[i]); GLOW.col.push(...cl); GLOW.w.push(h1, kind); } GLOW.n += 2;
+  }
+  function glowMesh() {
+    if (!GLOW.n) return null;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(GLOW.pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(GLOW.col, 3)); g.setAttribute('wth', new THREE.Float32BufferAttribute(GLOW.w, 2));
+    g.computeBoundingSphere();
+    const m = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, toneMapped: true });
+    m.onBeforeCompile = sh => {
+      sh.uniforms.uHeroNight = GLOW.U.night; sh.uniforms.uHeroLit = GLOW.U.lit; sh.uniforms.uHeroShop = GLOW.U.shop;
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec2 wth;\nvarying vec2 vWth;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvWth = wth;');
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec2 vWth;\nuniform float uHeroNight; uniform float uHeroLit; uniform float uHeroShop;')
+        .replace('#include <opaque_fragment>', '#include <opaque_fragment>\n  float heroOn = (vWth.y < 0.5 ? step(vWth.x, uHeroLit) : step(vWth.x, uHeroShop)) * uHeroNight;\n  gl_FragColor.rgb *= heroOn; gl_FragColor.a = heroOn;');
+    };
+    m.customProgramCacheKey = () => 'hero-glow';
+    const mesh = new THREE.Mesh(g, m); mesh.matrixAutoUpdate = false; mesh.castShadow = false; mesh.receiveShadow = false; mesh.name = 'hero_glow'; mesh.renderOrder = 2;
+    const sst = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+    mesh.onBeforeRender = () => {
+      const h = HOOKS.timeOfDay; if (typeof h !== 'number') { GLOW.U.night.value = 0; return; }
+      GLOW.U.night.value = Math.max(sst(18.1, 18.9, h), 1 - sst(5.3, 6.1, h));
+      GLOW.U.lit.value = h >= 17 && h < 22 ? 0.42 : h >= 22 ? lerp(0.42, 0.22, (h - 22) / 2) : h < 5 ? 0.1 : h < 7 ? 0.25 : 0.2;
+      GLOW.U.shop.value = h >= 17 && h < 21 ? 0.55 : h >= 21 && h < 23 ? 0.2 : 0.06;
+    };
+    scene.add(mesh);
+    return mesh;
+  }
+
+  // ------------------------------------------------------------ sign atlas (one canvas, one MeshLambert mesh)
+  class SignAtlas {
+    constructor(size = 1024) { this.S = size; const cv = document.createElement('canvas'); cv.width = cv.height = size; this.cv = cv; this.g = cv.getContext('2d'); this.x = 0; this.y = 0; this.rowH = 0; this.cache = new Map(); this.pos = []; this.nrm = []; this.uv = []; this.n = 0; }
+    fit(t, cx, cy, maxW, size, color, weight = 'bold') {
+      const g = this.g; let s = size; g.font = `${weight} ${s}px Arial, Helvetica, sans-serif`; let w = g.measureText(t).width;
+      while (w > maxW && s > size * 0.6) { s -= 1; g.font = `${weight} ${s}px Arial, Helvetica, sans-serif`; w = g.measureText(t).width; }
+      g.fillStyle = color; g.textAlign = 'center'; g.textBaseline = 'middle';
+      if (w > maxW) { g.save(); g.translate(cx, cy); g.scale(maxW / w, 1); g.fillText(t, 0, 0); g.restore(); } else g.fillText(t, cx, cy);
+    }
+    cell(d) {   // {text, sub, bg, fg, big} -> uv rect [u0, v0, u1, v1]
+      const key = JSON.stringify(d); if (this.cache.has(key)) return this.cache.get(key);
+      const w = d.big ? 512 : 256, h = d.big ? 128 : 64, S = this.S;
+      if (this.x + w > S) { this.x = 0; this.y += this.rowH; this.rowH = 0; }
+      if (this.y + h > S) return null;
+      const x = this.x, y = this.y, g = this.g;
+      g.clearRect(x, y, w, h); g.fillStyle = d.bg; g.fillRect(x, y, w, h);
+      if (!d.noBorder) { g.globalAlpha = 0.85; g.strokeStyle = d.fg; g.lineWidth = d.big ? 4 : 3; g.strokeRect(x + 5, y + 5, w - 10, h - 10); g.globalAlpha = 1; }
+      if (d.sub) { this.fit(d.text, x + w / 2, y + h * 0.4, w - 26, d.big ? 62 : 29, d.fg); this.fit(d.sub, x + w / 2, y + h * 0.78, w - 30, d.big ? 24 : 13, d.fg, 'normal'); }
+      else this.fit(d.text, x + w / 2, y + h / 2 + 1, w - 24, d.big ? 70 : 33, d.fg);
+      const uv = [(x + 1) / S, 1 - (y + h - 1) / S, (x + w - 1) / S, 1 - (y + 1) / S];
+      this.x += w; this.rowH = Math.max(this.rowH, h); this.cache.set(key, uv); return uv;
+    }
+    quad(F, s0, s1, y0, y1, d, uv) {   // lettering quad on a wall frame (front face only)
+      if (!uv) return;
+      const A = F.A, a = A(s0, y0, d), b = A(s1, y0, d), c = A(s1, y1, d), e = A(s0, y1, d), n = [F.nx, 0, F.nz];
+      const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+      const flip = (uy * vz - uz * vy) * n[0] + (uz * vx - ux * vz) * n[1] + (ux * vy - uy * vx) * n[2] < 0;
+      const mir = (F.nz * F.dx - F.nx * F.dz) < 0, u0 = mir ? uv[2] : uv[0], u1 = mir ? uv[0] : uv[2];   // s runs to the viewer's left on this winding -> mirror U
+      const V = flip ? [a, e, c, b] : [a, b, c, e], T = flip ? [[u0, uv[1]], [u0, uv[3]], [u1, uv[3]], [u1, uv[1]]] : [[u0, uv[1]], [u1, uv[1]], [u1, uv[3]], [u0, uv[3]]];
+      for (const i of [0, 1, 2, 0, 2, 3]) { this.pos.push(...V[i]); this.nrm.push(...n); this.uv.push(...T[i]); } this.n += 2;
+    }
+    flat(P, uv) {   // horizontal quad P[4] (counter-clockwise seen from above), normal up
+      if (!uv) return;
+      const T = [[uv[0], uv[1]], [uv[2], uv[1]], [uv[2], uv[3]], [uv[0], uv[3]]];
+      for (const i of [0, 2, 1, 0, 3, 2]) { this.pos.push(...P[i]); this.nrm.push(0, 1, 0); this.uv.push(...T[i]); } this.n += 2;
+    }
+    mesh() {
+      if (!this.n) return null;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nrm, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
+      g.computeBoundingSphere();
+      const tex = new THREE.CanvasTexture(this.cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = HI ? 4 : 2; tex.generateMipmaps = true; tex.minFilter = THREE.LinearMipmapLinearFilter;
+      const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5 })); m.matrixAutoUpdate = false; m.castShadow = false; m.receiveShadow = QL.shadow > 0; m.name = 'hero_signs'; scene.add(m);
+      return m;
+    }
+  }
+
+  // ------------------------------------------------------------ generic hero shop-house (market street)
+  // spec: {wall, bays:[kinds], name, sub, signBg, signFg, balcony, awning, reja, style, barC} — missing fields come from the hash
+  function shopHouse(gb, SG, b, fronts, spec, light) {
+    const P = b.P, st = Math.max(1, b.st || 1), h = Math.max(3.4, b.h), fh = (h - G0) / st, par = st > 1 ? 0.5 : 0.35, top = h + par;
+    const H = hsh(b), rnd = rng(H ^ 0x9e3779b9);
+    const wall = spec.wall ? C(spec.wall) : PAL.walls[H % PAL.walls.length], barC = (H >>> 5) % 4 === 0 ? PAL.barW : PAL.bar;
+    const style = spec.style ?? ((H >>> 3) % 3 === 0 ? 2 : 1), gr = (H >>> 7) & 3, o = { wall, style, gr, reja: spec.reja ?? rnd() < 0.78, barC, light };
+    const frames = framesOf(P), heroSet = new Set(fronts.map(F => F.p));   // frames are rebuilt per call: match by the shared polygon point
+    // plain walls (plaster), roof, parapet, rooftop clutter
+    for (const F of frames) if (!heroSet.has(F.p)) wq(gb, F, 0, F.L, G0, top, 0, wall, PLASTER(0, F.L, G0, top));
+    gb.cap(P, null, h, shade(PAL.roof, 0.92 + 0.16 * hash(H)));
+    bWalls(gb, P, h, top, shade(wall, 0.92), -2, 1, -2, null, true);
+    try { roofProps(gb, b, bInfo(b), obb(P), h, light ? 0.5 : 1, light); } catch (e) { }
+    let lot = 0;
+    for (const F of fronts) {
+      const n = Math.max(1, Math.round(F.L / 3.6)), bw = F.L / n, gh = G0 + fh, yl = gh - 0.95;
+      const bays = spec.bays || null, TR = HERO_SPECS.galeria.trades;
+      // one shop per front; fronts of 4+ bays (≈ 13 m) hold two shops. Each shop: one trade, one sign board, one awning colour
+      const nShops = n >= 4 && !spec.name ? 2 : 1, split = Math.ceil(n / 2), shops = [];
+      for (let q = 0; q < nShops; q++) {
+        const j0 = q === 0 ? 0 : split, j1 = nShops === 1 ? n : (q === 0 ? split : n), Hq = (H + q * 7919 + lot * 104729) >>> 0;
+        const t = TR[(Hq >>> 11) % TR.length], named = spec.name && q === 0;
+        shops.push({ j0, j1, trade: named ? { main: spec.name, sub: spec.sub || '', kind: null } : { main: t[0], sub: t[1], kind: t[2] }, sign: named && spec.signBg ? [spec.signBg, spec.signFg] : PAL.signs[(Hq >>> 9) % PAL.signs.length], awnC: PAL.awn[(Hq >>> 13) % PAL.awn.length] });
+      }
+      // ---- ground floor: shop bays
+      const ops = [];
+      for (const sh of shops) {
+        for (let j = sh.j0; j < sh.j1; j++) {
+          const s0 = j * bw + 0.2, s1 = (j + 1) * bw - 0.2, r = rnd();
+          const kind = bays ? bays[j % bays.length] : (j === sh.j0 && sh.trade.kind ? sh.trade.kind : r < 0.45 ? 'open' : r < 0.65 ? 'half' : r < 0.85 ? 'shut' : 'glass');
+          ops.push({ s0, s1, y0: G0, y1: yl });
+          recess(gb, F, s0, s1, G0, yl, kind === 'shut' ? 0.12 : 0.38, shade(wall, 0.85), PAL.dark, FAC_SHOP(kind, (gr + j) & 3));
+          if (kind !== 'shut') glowQuad(F, s0 + 0.1, s1 - 0.1, G0 + 1.8, yl - 0.08, -0.37, 1, Math.round(F.p.x * 3 + F.p.z * 7 + s0 * 41 + j * 17));
+          fBox(gb, F, s0 - 0.04, s1 + 0.04, yl, yl + 0.24, 0, 0.2, PAL.box, false, 15);                       // roll-up shutter box
+          if ((spec.awning ?? true) && (kind === 'open' || kind === 'half') && rnd() < 0.62) awning(gb, F, s0 + 0.05, s1 - 0.05, yl - 0.02, 1.0 + rnd() * 0.45, sh.awnC, rnd() < 0.3);
+          if (kind === 'shut') { for (let y = G0 + 0.3; y < yl - 0.2; y += 0.42) wq(gb, F, s0 + 0.02, s1 - 0.02, y, y + 0.025, -0.11, shade(PAL.box, 0.7)); }   // shutter ribs
+        }
+        // sign board across the shop's bays, lettering ≤ 7.5 m wide, centred
+        const a = sh.j0 * bw + 0.18, b = sh.j1 * bw - 0.18, m = (a + b) / 2, hw = Math.min(3.75, (b - a) / 2 - 0.06);
+        fBox(gb, F, a, b, yl + 0.26, gh - 0.1, 0, 0.09, C(sh.sign[0]), false, 15);
+        SG.quad(F, m - hw, m + hw, yl + 0.3, gh - 0.14, 0.095, SG.cell({ text: sh.trade.main, sub: sh.trade.sub, bg: sh.sign[0], fg: sh.sign[1] }));
+      }
+      wallBand(gb, F, G0, gh, ops, wall);
+      for (let j = 0; j <= n; j++) { const s = clamp(j * bw, 0.12, F.L - 0.12); fBox(gb, F, s - 0.12, s + 0.12, G0, top - 0.02, 0, 0.06, shade(wall, 0.96), true, 11); }
+      // ---- upper storeys
+      for (let k = 1; k < st; k++) {
+        const y0 = G0 + k * fh, y1 = y0 + fh, ups = [];
+        fBox(gb, F, 0, F.L, y0 - 0.06, y0 + 0.1, 0, 0.12, shade(wall, 0.9), false, 15);   // slab edge / cornice line
+        for (let j = 0; j < n; j++) {
+          const sc = (j + 0.5) * bw, balc = (spec.balcony ?? true) && k === 1 && bw > 2.6 && ((j * 7 + (H >>> 15)) % 10 < 4);
+          if (balc) { const s0 = sc - bw / 2 + 0.3, s1 = sc + bw / 2 - 0.3, dw = Math.min(0.75, (s1 - s0) / 2 - 0.35); ups.push({ s0: sc - dw, s1: sc + dw, y0, y1: y0 + 2.15 }); balconyUnit(gb, F, s0, s1, y0, o, rnd); }
+          else { const hw = Math.min(0.72, bw * 0.2), wy0 = y0 + 1.0, wy1 = Math.min(y1 - 0.45, y0 + 2.4); ups.push({ s0: sc - hw, s1: sc + hw, y0: wy0, y1: wy1 }); windowUnit(gb, F, sc, hw, wy0, wy1, o); if (!light && (j * 3 + k + (H >>> 17)) % 7 === 2) acUnit(gb, F, sc + hw + 0.15, y0 + 0.25); }
+        }
+        wallBand(gb, F, y0, y1, ups, wall);
+      }
+      if (top > G0 + st * fh + 0.01) wallBand(gb, F, G0 + st * fh, top, [], wall);
+      lot++;
+    }
+    return { name: spec.name || null };
+  }
+
+  // ------------------------------------------------------------ Corjuconi: explicit house front from HERO_SPECS.corjuconi
+  function houseFront(gb, SG, b, F, S, fromDir) {
+    const st = Math.max(1, S.floors || b.st || 1), h = S.height || Math.max(3.4, b.h), fh = (h - G0) / st, par = S.parapet ?? 0.45, top = S.roof === 'flat' ? h + par : h;
+    const wall = C(S.wall), trim = C(S.trim), zoc = C(S.zocalo), fr = S.front;
+    const flip = (F.dx * fromDir.x + F.dz * fromDir.z) < 0, s_ = s => flip ? F.L - s : s;     // positions measured from the `from` end
+    const rect = (s, w) => flip ? [s_(s + w), s_(s)] : [s_(s), s_(s + w)];
+    const ops = [];
+    // door
+    { const [a, c] = rect(fr.door.s, fr.door.w), y1 = G0 + fr.door.h; ops.push({ s0: a, s1: c, y0: G0, y1 });
+      recess(gb, F, a, c, G0, y1, 0.22, shade(wall, 0.85), C(fr.door.colour || '#3b3b3b'));
+      if (fr.door.kind === 'metal') for (let y = G0 + 0.25; y < y1 - 0.3; y += 0.36) wq(gb, F, a + 0.05, c - 0.05, y, y + 0.03, -0.2, shade(C(fr.door.colour || '#3b3b3b'), 0.7));
+      fBox(gb, F, a - 0.08, c + 0.08, y1, y1 + 0.1, 0, 0.08, trim, false, 7); fBox(gb, F, a - 0.3, c + 0.3, G0, G0 + 0.12, 0, 0.35, PAL.conc, true, 3); }
+    for (const w of fr.windows) { const [a, c] = rect(w.s, w.w), y0 = G0 + w.y, y1 = y0 + w.h; ops.push({ s0: a, s1: c, y0, y1 }); windowUnit(gb, F, (a + c) / 2, (c - a) / 2, y0, y1, { wall, style: w.style ?? 1, gr: 1, reja: w.reja !== false, barC: PAL.bar, light: false }); }
+    wallBand(gb, F, G0, top, ops, wall);
+    // zócalo (skipping the door), trim band under the parapet
+    { let s = 0; for (const o of ops.filter(o => o.y0 <= G0 + 0.01).sort((p, q) => p.s0 - q.s0)) { if (o.s0 > s) fBox(gb, F, s, o.s0, G0, G0 + 0.75, 0, 0.025, zoc, true, 11); s = o.s1; } if (s < F.L) fBox(gb, F, s, F.L, G0, G0 + 0.75, 0, 0.025, zoc, true, 11); }
+    fBox(gb, F, 0, F.L, h - 0.02, h + 0.1, 0, 0.1, trim, false, 15);
+    if (fr.sign) { const a = s_(fr.sign.s0), c = s_(fr.sign.s1 == null ? F.L - fr.sign.s0 : fr.sign.s1), s0 = Math.min(a, c), s1 = Math.max(a, c), y0 = G0 + fr.sign.y, y1 = y0 + fr.sign.h;
+      fBox(gb, F, s0, s1, y0, y1, 0, 0.1, C(fr.sign.bg), false, 15); SG.quad(F, s0 + 0.05, s1 - 0.05, y0 + 0.04, y1 - 0.04, 0.105, SG.cell({ text: fr.sign.text, sub: fr.sign.sub, bg: fr.sign.bg, fg: fr.sign.fg, big: true })); }
+    if (fr.plaque) { const [a, c] = rect(fr.plaque.s, fr.plaque.w), y0 = G0 + fr.plaque.y; fBox(gb, F, a, c, y0, y0 + fr.plaque.h, 0, 0.02, PAL.brass, false, 15); }
+    return { top, h, wall, fh };
+  }
+  // hipped clay-tile roof over a footprint's oriented box (atlas tile texture via fac z = -1), eaves `ov`
+  function hipRoof(gb, P, yE, pitchDeg, ov, tileC) {
+    const o = obb(P); let L = o.L, Wd = o.Wd, ux = o.ux, uz = o.uz; if (Wd > L) { [L, Wd] = [Wd, L]; [ux, uz] = [-uz, ux]; }
+    const hl = L / 2, hw = Wd / 2, t = Math.tan(pitchDeg * Math.PI / 180), rise = Math.min(hw * t, 3), yEv = yE - ov * t, yR = yE + rise, rl = Math.max(0, hl - hw), ea = hl + ov, ew = hw + ov;
+    const at = (a, w, y) => [o.cx + ux * a - uz * w, y, o.cz + uz * a + ux * w], slope = Math.hypot(ew, yR - yEv), F = (x, y) => [x, y, -1];
+    for (const sg of [-1, 1]) {
+      gb.quad(at(-ea, sg * ew, yEv), at(ea, sg * ew, yEv), at(rl, 0, yR), at(-rl, 0, yR), [-uz * sg * (yR - yEv), ew, ux * sg * (yR - yEv)], shade(tileC, sg > 0 ? 0.97 : 1), F(0, 0), F(2 * ea, 0), F(ea + rl, slope), F(ea - rl, slope));
+      gb.quad(at(-ea, sg * ew, yEv - 0.05), at(ea, sg * ew, yEv - 0.05), at(rl, 0, yR - 0.05), at(-rl, 0, yR - 0.05), [uz * sg, -1, -ux * sg], C('#6b5040'));
+      const es = Math.hypot(ea - rl, yR - yEv);
+      gb.tri(at(sg * ea, -ew, yEv), at(sg * ea, ew, yEv), at(sg * rl, 0, yR), [ux * sg * (yR - yEv), ea - rl, uz * sg * (yR - yEv)], shade(tileC, 0.93), F(0, 0), F(2 * ew, 0), F(ew, es));
+      gb.tri(at(sg * ea, -ew, yEv - 0.05), at(sg * ea, ew, yEv - 0.05), at(sg * rl, 0, yR - 0.05), [-ux * sg, -1, -uz * sg], C('#6b5040'));
+      const fa = at(-ea, sg * ew, yEv), fb = at(ea, sg * ew, yEv); gb.quad([fa[0], yEv - 0.14, fa[2]], [fb[0], yEv - 0.14, fb[2]], [fb[0], yEv, fb[2]], [fa[0], yEv, fa[2]], [-uz * sg, 0, ux * sg], PAL.slab);
+    }
+    if (rl > 0.05) for (const sg of [-1, 1]) gb.quad(at(-rl, 0, yR + 0.08), at(rl, 0, yR + 0.08), at(rl, sg * 0.16, yR - 0.02), at(-rl, sg * 0.16, yR - 0.02), [-uz * sg, 1.5, ux * sg], C('#8f4a33'));
+  }
+  // low gable fibre-cement roof over a footprint (ridge along the long axis), white fascia on the gable ends, optional skylights
+  function fibroGable(gb, P, yE, rise, cl, skylights) {
+    const o = obb(P); let L = o.L, Wd = o.Wd, ux = o.ux, uz = o.uz; if (Wd > L) { [L, Wd] = [Wd, L]; [ux, uz] = [-uz, ux]; }
+    const hl = L / 2 + 0.25, hw = Wd / 2 + 0.3, at = (a, w, y) => [o.cx + ux * a - uz * w, y, o.cz + uz * a + ux * w], yR = yE + rise, F = (x, y) => [x, y, -3];
+    for (const sg of [-1, 1]) {
+      gb.quad(at(-hl, sg * hw, yE), at(hl, sg * hw, yE), at(hl, 0, yR), at(-hl, 0, yR), [-uz * sg * rise, hw, ux * sg * rise], shade(cl, sg > 0 ? 0.95 : 1), F(0, 0), F(2 * hl, 0), F(2 * hl, Math.hypot(hw, rise)), F(0, Math.hypot(hw, rise)));
+      gb.tri(at(sg * hl, -hw, yE - 0.3), at(sg * hl, hw, yE - 0.3), at(sg * hl, 0, yR), [ux * sg, 0, uz * sg], PAL.slab);   // gable fascia / end wall
+      const fa = at(-hl, sg * hw, yE), fb = at(hl, sg * hw, yE); gb.quad([fa[0], yE - 0.25, fa[2]], [fb[0], yE - 0.25, fb[2]], [fb[0], yE + 0.02, fb[2]], [fa[0], yE + 0.02, fa[2]], [-uz * sg, 0, ux * sg], PAL.slab);
+    }
+    for (let k = 0; k < (skylights || 0); k++) { const a = lerp(-hl * 0.6, hl * 0.6, (k + 0.5) / skylights), w = -hw * 0.45, y = yE + rise * 0.55; gb.box(at(a, w, 0)[0], y + 0.12, at(a, w, 0)[2], 0.9, 0.24, 0.7, C('#cfd6da'), Math.atan2(uz, ux)); }
+  }
+  // razor-wire coil along a wall frame: thin grey diamonds in the vertical plane
+  function razor(gb, F, s0, s1, y, d) { const A = F.A, n = [F.nx, 0, F.nz], g = C('#b7bcc0'); for (let s = s0 + 0.2; s < s1 - 0.2; s += 0.42) { gb.quad(A(s - 0.19, y + 0.19, d), A(s, y, d), A(s + 0.19, y + 0.19, d), A(s, y + 0.38, d), n, g); gb.quad(A(s - 0.19, y + 0.19, d - 0.3), A(s, y, d - 0.3), A(s + 0.19, y + 0.19, d - 0.3), A(s, y + 0.38, d - 0.3), n, g); } }
+  // white grid gate (photo 10): verticals + horizontals every 0.3 m, in a frame
+  function gridGate(gb, F, s0, s1, y0, y1, d, cl) {
+    const A = F.A, n = [F.nx, 0, F.nz], w = 0.018;
+    for (let s = s0; s <= s1 + 0.01; s += 0.3) gb.quad(A(s - w, y0, d), A(s + w, y0, d), A(s + w, y1, d), A(s - w, y1, d), n, cl);
+    for (let y = y0 + 0.05; y <= y1; y += 0.3) gb.quad(A(s0, y - w, d + 0.004), A(s1, y - w, d + 0.004), A(s1, y + w, d + 0.004), A(s0, y + w, d + 0.004), n, cl);
+    fBox(gb, F, s0 - 0.04, s1 + 0.04, y1, y1 + 0.06, d - 0.03, d + 0.03, cl, false, 15); fBox(gb, F, (s0 + s1) / 2 - 0.025, (s0 + s1) / 2 + 0.025, y0, y1, d - 0.03, d + 0.03, cl, true, 15);
+  }
+  const corjWin = (gb, F, sc, hw, y0, y1, S) => { recess(gb, F, sc - hw, sc + hw, y0, y1, 0.14, C(S.wall), PAL.dark, FAC_WIN(2, 1)); fBox(gb, F, sc - hw - 0.1, sc + hw + 0.1, y0 - 0.1, y0, 0, 0.05, C(S.frame), false, 15); fBox(gb, F, sc - hw - 0.1, sc + hw + 0.1, y1, y1 + 0.1, 0, 0.05, C(S.frame), false, 15); fBox(gb, F, sc - hw - 0.1, sc - hw, y0, y1, 0, 0.05, C(S.frame), true, 15); fBox(gb, F, sc + hw, sc + hw + 0.1, y0, y1, 0, 0.05, C(S.frame), true, 15); fBars(gb, F, sc - hw + 0.03, sc + hw - 0.03, y0 + 0.03, y1 - 0.03, 0.05, C(S.bar), HI ? 0.14 : 0.22); glowQuad(F, sc - hw + 0.06, sc + hw - 0.06, y0 + 0.06, y1 - 0.06, -0.13, 0, Math.round(F.p.x * 3 + F.p.z * 7 + sc * 31 + y0 * 97)); };
+  const corjDoor = (gb, F, sc, hw, h, S) => { recess(gb, F, sc - hw, sc + hw, G0, G0 + h, 0.25, C(S.wall), C('#101214')); fBox(gb, F, sc - hw - 0.12, sc + hw + 0.12, G0 + h, G0 + h + 0.12, 0, 0.05, C(S.frame), false, 15); fBox(gb, F, sc - hw - 0.12, sc - hw, G0, G0 + h, 0, 0.05, C(S.frame), true, 15); fBox(gb, F, sc + hw, sc + hw + 0.12, G0, G0 + h, 0, 0.05, C(S.frame), true, 15); };
+  // Corjuconi compound (family photos 01/02/09/10/12 + cadastre). parts = {room, L, block2, shed} (cadastre building objects, may be missing)
+  function buildCorjuconi(gb, SG, sel) {
+    const S = HERO_SPECS.corjuconi, Pz = sel.parts, wall = C(S.wall), frame = C(S.frame), white = C(S.white), splitZ = -S.cornerSplitN;
+    const streetF = P => framesOf(P).filter(F => F.L > 2 && facesStreet({ p: F.p, q: F.q, nx: F.nx, nz: F.nz }));
+    // ---- room at #24-56: 1 floor, two barred windows to the street, grey fibre-cement roof
+    if (Pz.room) {
+      const b = Pz.room, h = 3.6, fr = streetF(b.P), set = new Set(fr.map(F => F.p));
+      for (const F of framesOf(b.P)) if (!set.has(F.p)) wq(gb, F, 0, F.L, G0, h, 0, wall, PLASTER(0, F.L, G0, h));
+      for (const F of fr) { const n = Math.max(1, Math.round(F.L / 4.2)), ops = []; for (let j = 0; j < n; j++) { const sc = (j + 0.5) * F.L / n, hw = 0.75; ops.push({ s0: sc - hw, s1: sc + hw, y0: G0 + 1.1, y1: G0 + 2.4 }); corjWin(gb, F, sc, hw, G0 + 1.1, G0 + 2.4, S); } wallBand(gb, F, G0, h, ops, wall); fBox(gb, F, 0, F.L, G0, G0 + 0.3, 0, 0.02, C('#8a3a2c'), true, 11); }
+      fibroGable(gb, b.P, h, 0.5, C(S.fibro), 0);
+    }
+    // ---- the L: corner volume (hipped tile roof, tall doors) + street wall with the gate + red-tile terrace + east wing
+    if (Pz.L) {
+      const b = Pz.L, hC = 3.9, hW = S.streetWallH;
+      const corner = b.P.filter(p => p.z < splitZ + 0.3), hasCorner = corner.length >= 3;
+      // corner volume: box over the part's north wing (points north of the split line), clipped polygon
+      const cornerP = hasCorner ? clipNorth(b.P, splitZ) : null, southP = clipSouth(b.P, splitZ);
+      if (cornerP && Math.abs(signedArea(cornerP)) > 20) {
+        const fr = streetF(cornerP), set = new Set(fr.map(F => F.p));
+        for (const F of framesOf(cornerP)) if (!set.has(F.p)) wq(gb, F, 0, F.L, G0, hC, 0, wall, PLASTER(0, F.L, G0, hC));
+        for (const F of fr) {
+          const ops = [], n = Math.max(2, Math.round(F.L / 3.3)), bw = F.L / n;
+          for (let j = 0; j < n; j++) { const sc = (j + 0.5) * bw; if (j === 1 && n > 2) { ops.push({ s0: sc - 0.7, s1: sc + 0.7, y0: G0 + 1.0, y1: G0 + 2.4 }); corjWin(gb, F, sc, 0.7, G0 + 1.0, G0 + 2.4, S); } else { ops.push({ s0: sc - 0.62, s1: sc + 0.62, y0: G0, y1: G0 + 2.7 }); corjDoor(gb, F, sc, 0.62, 2.7, S); } }
+          wallBand(gb, F, G0, hC, ops, wall); fBox(gb, F, 0, F.L, G0, G0 + 0.3, 0, 0.02, C('#8a3a2c'), true, 11);
+        }
+        hipRoof(gb, cornerP, hC, 24, 0.55, C(S.tile));
+      }
+      // street wall (west edge) with gate + razor wire; terrace behind; east wing room
+      if (southP && Math.abs(signedArea(southP)) > 10) {
+        const fr = streetF(southP), set = new Set(fr.map(F => F.p));
+        const inner = southP.filter(p => p.x > b.bb[0] + 6), wing = inner.length >= 3 ? clipEastOf(southP, b.bb[0] + 6.5) : null;
+        for (const F of framesOf(southP)) { if (set.has(F.p)) continue; const inWing = wing && pointInPoly(F.A(F.L / 2, 0, -0.3)[0], F.A(F.L / 2, 0, -0.3)[2], wing); wq(gb, F, 0, F.L, G0, inWing ? 3.4 : hW, 0, wall, PLASTER(0, F.L, G0, inWing ? 3.4 : hW)); }
+        for (const F of fr) {
+          const gz = -S.gate.fromN, sG = clamp(((gz - F.p.z) * F.dz + (0 - 0) ) / (F.dz || 1e-6), 0.5, F.L - S.gate.w - 0.5), s0 = Math.min(sG, F.L - S.gate.w - 0.3), s1 = s0 + S.gate.w, ops = [{ s0, s1, y0: G0, y1: G0 + S.gate.h }];
+          // one barred window per 4 m of wall outside the gate
+          for (let sc = 1.4; sc < F.L - 1.2; sc += 4.0) if (sc + 0.75 < s0 - 0.3 || sc - 0.75 > s1 + 0.3) { ops.push({ s0: sc - 0.7, s1: sc + 0.7, y0: G0 + 1.1, y1: G0 + 2.3 }); corjWin(gb, F, sc, 0.7, G0 + 1.1, G0 + 2.3, S); }
+          wallBand(gb, F, G0, hW, ops, wall); fBox(gb, F, 0, F.L, G0, G0 + 0.3, 0, 0.02, C('#8a3a2c'), true, 11);
+          gridGate(gb, F, s0 + 0.05, s1 - 0.05, G0 + 0.05, G0 + S.gate.h - 0.05, -0.12, white);
+          fBox(gb, F, s0 - 0.1, s1 + 0.1, G0 + S.gate.h, hW, 0, 0.02, wall, false, 15);
+          if (S.razorWire) razor(gb, F, 0, F.L, hW + 0.02, 0.05);
+          // sign board above the gate (family request)
+          fBox(gb, F, s0 - 0.1, s1 + 0.1, hW + 0.1, hW + 0.75, 0, 0.08, C(S.sign.bg), false, 15); SG.quad(F, s0, s1, hW + 0.14, hW + 0.71, 0.085, SG.cell({ text: S.sign.text, sub: S.sign.sub, bg: S.sign.bg, fg: S.sign.fg, big: true }));
+          SEL.corjuconi.gate = { x: F.A((s0 + s1) / 2, 0, 0)[0], z: F.A((s0 + s1) / 2, 0, 0)[2] };
+        }
+        // terrace: red tile floor across the open part, inner wall faces visible through the gate
+        gb.cap(southP, null, KERB + 0.025, C(S.terrace));
+        bWalls(gb, southP, G0, hW, wall, -2, 1, -2, null, true);
+        if (wing) { gb.cap(wing, null, 3.4, C(S.zinc)); }
+      }
+    }
+    // ---- two-storey block behind: sky blue, barred windows on every face, grey fibre-cement gable roof with skylights
+    if (Pz.block2) {
+      const b = Pz.block2, st = 2, h = 7.0, fh = (h - G0) / st;
+      for (const F of framesOf(b.P)) {
+        if (F.L < 4) { wq(gb, F, 0, F.L, G0, h, 0, wall, PLASTER(0, F.L, G0, h)); continue; }
+        const n = Math.max(1, Math.floor(F.L / 3.0)), step = F.L / n;
+        for (let k = 0; k < st; k++) { const y0 = G0 + k * fh, y1 = y0 + fh, ops = []; for (let j = 0; j < n; j++) { const sc = (j + 0.5) * step, hw = 0.7, wy0 = y0 + 1.0, wy1 = y0 + 2.35; ops.push({ s0: sc - hw, s1: sc + hw, y0: wy0, y1: wy1 }); corjWin(gb, F, sc, hw, wy0, wy1, S); } wallBand(gb, F, y0, y1, ops, wall); }
+        fBox(gb, F, 0, F.L, h - 0.02, h + 0.1, 0, 0.12, white, false, 15);
+      }
+      fibroGable(gb, b.P, h, 1.1, C(S.fibro), 3);
+    }
+    // ---- brick annex
+    if (Pz.shed) { const b = Pz.shed, h = 3.4; for (const F of framesOf(b.P)) wq(gb, F, 0, F.L, G0, h, 0, C('#ffffff'), [[0, G0, -4], [F.L, G0, -4], [F.L, h, -4], [0, h, -4]]); gb.cap(b.P, null, h, C(S.zinc)); fibroGable(gb, b.P, h, 0.3, C('#9a9c98'), 0); }
+    return true;
+  }
+  // polygon clipping against an axis-aligned line (Sutherland–Hodgman, one edge)
+  function clipPoly(P, keep) { const out = []; for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length], ka = keep(a), kb = keep(b); if (ka) out.push(a); if (ka !== kb) { const t = keep.t(a, b); out.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t }); } } return out; }
+  const clipNorth = (P, z0) => { const k = p => p.z <= z0; k.t = (a, b) => (z0 - a.z) / ((b.z - a.z) || 1e-9); return clipPoly(P, k); };
+  const clipSouth = (P, z0) => { const k = p => p.z >= z0; k.t = (a, b) => (z0 - a.z) / ((b.z - a.z) || 1e-9); return clipPoly(P, k); };
+  const clipEastOf = (P, x0) => { const k = p => p.x >= x0; k.t = (a, b) => (x0 - a.x) / ((b.x - a.x) || 1e-9); return clipPoly(P, k); };
+  // abandoned corner lot opposite Corjuconi (photos 02, 11): roofless white walls with peeling plaster, pink columns, ivy, rubbish
+  function buildAbandoned(gb, parts) {
+    const W = C('#e9e6dd'), PEEL = C('#b48a63'), PINK = C('#c98a8a'), IVY = C('#3f7a35'), r = rng(4242);
+    for (const b of parts) {
+      const P = b.P, h = 3.0;
+      for (const F of framesOf(P)) { wq(gb, F, 0, F.L, G0, h, 0, W, PLASTER(0, F.L, G0, h)); for (let k = 0; k < F.L / 2; k++) { const s = r() * (F.L - 0.8), w = 0.4 + r() * 0.9, y = G0 + r() * 1.8; wq(gb, F, s, s + w, y, y + 0.3 + r() * 0.6, 0.012, k % 3 ? PEEL : C('#8a8f8a')); } }
+      bWalls(gb, P, G0, h, shade(W, 0.9), -2, 1, -2, null, true); bWalls(gb, P, h, h + 0.12, shade(W, 0.8), -2, 1, -2, null, false);
+      const o = obb(P), bb = b.bb;
+      for (let k = 0; k < 4; k++) { const x = lerp(bb[0] + 1, bb[2] - 1, r()), z = lerp(bb[1] + 1, bb[3] - 1, r()); if (pointInPoly(x, z, P)) gb.box(x, G0 + 1.85, z, 0.3, 3.7, 0.3, PINK, o.ang); }
+      if (LMLIB && LMLIB.blob) for (let k = 0; k < 6; k++) { const x = lerp(bb[0] + 0.8, bb[2] - 0.8, r()), z = lerp(bb[1] + 0.8, bb[3] - 0.8, r()); if (pointInPoly(x, z, P)) LMLIB.blob(gb, x, 0.5 + r() * 0.6, z, 1.1 + r() * 0.9, 1, 0.5, 1, IVY, 0); }
+    }
+    // rubbish on the sidewalk by the corner
+    const b0 = parts[0], fr = framesOf(b0.P).filter(F => facesStreet({ p: F.p, q: F.q, nx: F.nx, nz: F.nz }));
+    if (LMLIB && LMLIB.ball) for (const F of fr) for (let k = 0; k < 7; k++) { const p = F.A(0.6 + r() * (F.L - 1.2), 0, 0.5 + r() * 0.5); LMLIB.ball(gb, p[0], 0.25 - G0 + 0.02, p[2], 0.22 + r() * 0.14, r() < 0.6 ? C('#ececec') : C('#1e1e20')); }
+  }
+  // building site on the old school's SW corner lot (photo 06): mesh fence on posts, mixer, rebar cages, sand
+  function buildConstruction(gb, b) {
+    const P = b.P, FENCE = C('#2f6b3a'), POST = C('#6e6e6a'), r = rng(99);
+    for (const F of framesOf(P)) { wq(gb, F, 0, F.L, G0 + 0.15, G0 + 2.0, 0, FENCE); wq(gb, F, 0, F.L, G0 + 0.15, G0 + 2.0, -0.01, FENCE); for (let s = 0; s <= F.L; s += 2.5) prism(gb, F.A(Math.min(s, F.L), 0, 0)[0], G0, F.A(Math.min(s, F.L), 0, 0)[2], G0 + 2.2, 0.04, POST); }
+    const c = centroid(P), o = obb(P);
+    gb.box(c.x, G0 + 0.55, c.z, 1.6, 1.1, 1.0, C('#e8742a'), o.ang); if (LMLIB && LMLIB.cyl) LMLIB.cyl(gb, c.x + 0.4, 0.9, c.z, 1.0, 0.55, 0.45, 10, C('#3a5fa8'));
+    for (let k = 0; k < 8; k++) { const x = lerp(b.bb[0] + 1, b.bb[2] - 1, r()), z = lerp(b.bb[1] + 1, b.bb[3] - 1, r()); if (!pointInPoly(x, z, P) || Math.hypot(x - c.x, z - c.z) < 1.6) continue; for (const [dx, dz] of [[-0.15, -0.15], [0.15, -0.15], [0.15, 0.15], [-0.15, 0.15]]) prism(gb, x + dx, G0, z + dz, G0 + 1.0 + r() * 1.2, 0.012, C('#6a4a36')); }
+    if (LMLIB && LMLIB.blob) LMLIB.blob(gb, c.x - 2.5, 0.3, c.z + 1.5, 1.4, 1, 0.45, 1, C('#c9b48a'), 0);
+  }
+  // road lettering flat on the carriageway (PARE) and arrows for the southbound approach
+  function roadMarks(gb, SG, A, B, back) {   // A = junction, B = previous crossing upstream; traffic B -> A
+    const d = unit(A.x - B.x, A.z - B.z), rt = { x: -d.z, z: d.x }, c = { x: A.x - d.x * back, z: A.z - d.z * back }, y = 0.035, WH = C('#eeede8');
+    const quadFlat = (cx, cz, w, h, uv) => { const P = [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]].map(([u, v]) => [cx + rt.x * u + d.x * v, y, cz + rt.z * u + d.z * v]); SG.flat(P, uv); };
+    const uv = SG.cell({ text: 'PARE', bg: 'rgba(0,0,0,0)', fg: '#f2f1ec', noBorder: true });
+    for (const sg of [-1, 1]) quadFlat(c.x + rt.x * sg * 1.8, c.z + rt.z * sg * 1.8, 3.2, 1.3, uv);
+    for (const sg of [-1, 1]) { const ax = c.x + rt.x * sg * 1.8 + d.x * 2.6, az = c.z + rt.z * sg * 1.8 + d.z * 2.6; gb.tri([ax - rt.x * 0.45, y, az - rt.z * 0.45], [ax + rt.x * 0.45, y, az + rt.z * 0.45], [ax + d.x * 1.2, y, az + d.z * 1.2], [0, 1, 0], WH); gb.quad([ax - rt.x * 0.12 - d.x * 1.6, y, az - rt.z * 0.12 - d.z * 1.6], [ax + rt.x * 0.12 - d.x * 1.6, y, az + rt.z * 0.12 - d.z * 1.6], [ax + rt.x * 0.12, y, az + rt.z * 0.12], [ax - rt.x * 0.12, y, az - rt.z * 0.12], [0, 1, 0], WH); }
+  }
+
+  // ------------------------------------------------------------ Antiguo Colegio Champagnat (block model)
+  function buildChampagnat(gb, SG, parts, blockP) {
+    const S = HERO_SPECS.champagnat, wall = C(S.wall), band = C(S.band), trim = C(S.trim), door = C(S.door), iron = C(S.iron), W = S.window;
+    const big = parts.slice().sort((p, q) => Math.abs(signedArea(q.P)) - Math.abs(signedArea(p.P)))[0];
+    const bc = centroid(blockP);
+    for (const b of parts) {
+      const P = b.P, A = Math.abs(signedArea(P)), o = obb(P), thin = Math.min(o.L, o.Wd) < 4.5 && Math.max(o.L, o.Wd) > 20;
+      if (thin) {   // 3 m cadastre strip on Carrera 28 -> perimeter wall with pilasters, main gate and the name board
+        const hW = S.perimeterWall.h, top = hW;
+        const frames = framesOf(P), long = frames.filter(F => F.L > 15);
+        const street = long.find(F => facesStreet({ p: F.p, q: F.q, nx: F.nx, nz: F.nz })) || long[0], back = long.find(F => F !== street) || null;
+        const gs = street.L * S.gateAt, gw = 4.4, pw = 0.7, thick = Math.min(o.L, o.Wd);
+        const gateOps = F => { const s = F === street ? gs : F.L - gs; return [{ s0: s - gw / 2, s1: s + gw / 2, y0: G0, y1: top }, { s0: s + gw / 2 + pw + 0.1, s1: s + gw / 2 + pw + 1.2, y0: G0, y1: G0 + 2.25 }]; };
+        for (const F of frames) wallBand(gb, F, G0, top, F === street || F === back ? gateOps(F) : [], wall);
+        gb.cap(P, null, top, shade(trim, 0.95)); bWalls(gb, P, top, top + 0.12, trim, -2, 1, -2, null, false); bWalls(gb, P, top, top + 0.12, trim, -2, 1, -2, null, true);
+        for (const F of [street, back]) {
+          if (!F) continue;
+          const s = F === street ? gs : F.L - gs;
+          for (let x = 2.1; x < F.L - 1; x += S.perimeterWall.pilasterEvery) if (Math.abs(x - s) > gw / 2 + 1.6) fBox(gb, F, x - 0.18, x + 0.18, G0, top + 0.2, 0, 0.1, trim, true, 11);
+          fBox(gb, F, 0, F.L, G0, G0 + 0.6, 0, 0.02, band, true, 11);
+          // piers, gate leaves (bars), pedestrian door, board on top of the piers
+          if (F === street) {
+            { const gp = F.A(s, 0, 0), gf = F.A(s, 0, 6); SEL.champagnat.gate = { x: gp[0], z: gp[2] }; const e = LANDMARK_INFO.find(l => l.n === 'Antigua Escuela Champagnat'); if (e) e.front = { x: gf[0], z: gf[2] }; }
+            for (const sg of [-1, 1]) fBox(gb, F, s + sg * (gw / 2 + pw / 2) - pw / 2, s + sg * (gw / 2 + pw / 2) + pw / 2, G0, G0 + 3.9, -(thick - 0.1), 0.25, trim, true, 15);
+            fBars(gb, F, s - gw / 2 + 0.05, s + gw / 2 - 0.05, G0 + 0.05, G0 + 2.6, -0.4, iron, HI ? 0.13 : 0.2);
+            fBox(gb, F, s - gw / 2, s + gw / 2, G0 + 2.6, G0 + 2.68, -0.44, -0.36, iron, false, 15); fBox(gb, F, s - 0.03, s + 0.03, G0, G0 + 2.6, -0.45, -0.35, iron, true, 15);
+            fBox(gb, F, s - gw / 2 - pw, s + gw / 2 + pw, G0 + 3.9, G0 + 4.75, -0.6, 0.3, C(S.sign.bg), false, 15);
+            SG.quad(F, s - gw / 2 - pw + 0.1, s + gw / 2 + pw - 0.1, G0 + 3.98, G0 + 4.67, 0.305, SG.cell({ text: S.sign.text, sub: S.sign.sub, bg: S.sign.bg, fg: S.sign.fg, big: true }));
+            const pd = gateOps(F)[1]; recess(gb, F, pd.s0, pd.s1, G0, pd.y1, 0.12, wall, door); fBox(gb, F, pd.s0 - 0.08, pd.s1 + 0.08, pd.y1, pd.y1 + 0.1, 0, 0.06, trim, false, 7);
+          } else { const pd = gateOps(F)[1]; recess(gb, F, pd.s0, pd.s1, G0, pd.y1, 0.12, wall, door); }
+        }
+        continue;
+      }
+      if (b === big) {   // U-shaped two-storey classroom building round the patio
+        const st = Math.max(2, b.st || 2), h = Math.max(6.6, b.h), fh = (h - G0) / st, par = 0.6, top = h + par;
+        for (const F of framesOf(P)) {
+          const street = facesStreet({ p: F.p, q: F.q, nx: F.nx, nz: F.nz }), short = F.L < 6;
+          if (short) { wq(gb, F, 0, F.L, G0, top, 0, wall, PLASTER(0, F.L, G0, top)); continue; }
+          const n = Math.max(1, Math.floor((F.L - 1.2) / W.every)), step = (F.L - 1.2) / n;
+          for (let k = 0; k < st; k++) {
+            const y0 = G0 + k * fh, y1 = y0 + fh, ops = [];
+            for (let j = 0; j < n; j++) {
+              const sc = 0.6 + (j + 0.5) * step;
+              if (!street && k === 0 && j % 3 === 1) { const dw = 0.55, dy = G0 + 2.3; ops.push({ s0: sc - dw, s1: sc + dw, y0: G0, y1: dy }); recess(gb, F, sc - dw, sc + dw, G0, dy, 0.14, wall, door); fBox(gb, F, sc - dw - 0.06, sc + dw + 0.06, dy, dy + 0.1, 0, 0.06, trim, false, 7); continue; }
+              const hw = W.w / 2, wy0 = y0 + W.sill, wy1 = Math.min(y1 - 0.4, wy0 + W.h); ops.push({ s0: sc - hw, s1: sc + hw, y0: wy0, y1: wy1 });
+              windowUnit(gb, F, sc, hw, wy0, wy1, { wall, style: W.style, gr: 2, reja: W.reja, barC: PAL.bar, light: !HI });
+            }
+            wallBand(gb, F, y0, y1, ops, wall);
+            if (k > 0) fBox(gb, F, 0, F.L, y0 - 0.08, y0 + 0.12, 0, 0.14, trim, false, 15);
+          }
+          wallBand(gb, F, G0 + st * fh, top, [], wall);
+          fBox(gb, F, 0, F.L, G0, G0 + 0.9, 0, 0.025, band, true, 11);                   // dado band
+          fBox(gb, F, 0, F.L, top - 0.12, top + 0.05, 0, 0.1, trim, false, 15);           // coping
+          if (!street) {   // patio side: ground-floor arcade + first-floor walkway with railing (typical school gallery) [APX]
+            const d = 1.9, ys = G0 + fh;
+            fBox(gb, F, 0.2, F.L - 0.2, ys - 0.18, ys, 0, d, shade(wall, 0.95), false, 15);
+            for (let s = 0.6; s < F.L - 0.3; s += 3.5) fBox(gb, F, s - 0.16, s + 0.16, G0, ys - 0.18, d - 0.32, d, trim, true, 15);
+            fBars(gb, F, 0.25, F.L - 0.25, ys, ys + 1.0, d - 0.05, iron, HI ? 0.14 : 0.24);
+            fBox(gb, F, 0.25, F.L - 0.25, ys + 1.0, ys + 1.05, d - 0.09, d - 0.01, iron, false, 15);
+          }
+        }
+        gb.cap(P, null, h, shade(PAL.roof, 0.95)); bWalls(gb, P, h, top, shade(wall, 0.92), -2, 1, -2, null, true);
+        continue;
+      }
+      // other small parts in the block (corner shop / portería) -> generic shop-house, invented trade
+      const fronts = framesOf(P).filter(F => F.L > 2 && facesStreet({ p: F.p, q: F.q, nx: F.nx, nz: F.nz }));
+      shopHouse(gb, SG, b, fronts, { name: 'Papelería Escolar La 28', sub: 'Fotocopias · Útiles', bays: ['glass', 'open'], balcony: false }, !HI);
+    }
+    // patio: trees, flagpole, optional court (the block slab at KERB is the paving)
+    const inner = (LMLIB && LMLIB.insetConvex) ? LMLIB.insetConvex(blockP.slice(), 24) : null;
+    if (inner && Math.abs(signedArea(inner)) > 200) {
+      const ic = centroid(inner), r = rng(77);
+      if (S.court) { const o = obb(inner), ux = o.ux, uz = o.uz, hl = S.court.l / 2, hw = S.court.w / 2, at = (a, w) => ({ x: ic.x + ux * a - uz * w, z: ic.z + uz * a + ux * w }), Q = [at(-hl, -hw), at(hl, -hw), at(hl, hw), at(-hl, hw)]; gb.cap(Q, null, KERB + 0.03, C(S.court.colour)); if (typeof ribbon === 'function') ribbon(gb, Q.concat([Q[0]]), 0.1, KERB + 0.04, C('#f2f2ee')); }
+      if (S.flagpole) { const fp = { x: ic.x + 2, z: ic.z - 6 }; const g = new THREE.CylinderGeometry(0.05, 0.08, 9, 6); g.translate(fp.x, KERB + 4.5, fp.z); mergeInto(gb, g, C('#f2f0ea')); g.dispose(); }
+      if (LMLIB && LMLIB.saman) for (let i = 0; i < S.trees; i++) { const bb = bboxOf(inner); for (let t = 0; t < 8; t++) { const x = lerp(bb[0], bb[2], r()), z = lerp(bb[1], bb[3], r()); if (pointInPoly(x, z, inner) && Math.hypot(x - ic.x, z - ic.z) > 7) { LMLIB.saman(gb, x, z, KERB - G0, 0.7 + 0.2 * r(), i); break; } } }
+    }
+  }
+
+  // ============================================================ selection at module load (before buildBuildings())
+  const SEL = { corjuconi: null, champagnat: null, galeria: [], removed: new Set(), notes: [] };
+  const take = (b, tag) => { if (!b || SEL.removed.has(b)) return false; b.hero = tag; SEL.removed.add(b); return true; };
+  const bAt = (x, z, pred) => { for (const b of bGrid.query(x, z, 1, [], QSTAMP++)) if (b.P && b.s !== 'lm' && b.h > 2 && (!pred || pred(b)) && x >= b.bb[0] && x <= b.bb[2] && z >= b.bb[1] && z <= b.bb[3] && pointInPoly(x, z, b.P)) return b; return null; };
+  // ---- 1. Corjuconi: walk the address grid (sanity check of the lot) + take the compound parts from the photo-verified table
+  {
+    const S = HERO_SPECS.corjuconi, L = S.locate, A = X(L.street, L.from), B = X(L.street, L.toward);
+    let sel = { parts: {}, abandoned: [] };
+    if (A && B) {
+      const d = unit(B.x - A.x, B.z - A.z), right0 = { x: -d.z, z: d.x }, sg = L.side === 'even' ? 1 : -1, right = { x: right0.x * sg, z: right0.z * sg };
+      const px = A.x + d.x * L.metres, pz = A.z + d.z * L.metres, ne = nearestEdge(px, pz, 25, e => e.name === L.street), w = ne ? ne.e.w : 7.6;
+      let b = null; for (const off of [w / 2 + 2.5, w / 2 + 5, w / 2 + 8, w / 2 + 1]) { b = bAt(px + right.x * off, pz + right.z * off, q => q.k !== 'shed'); if (b) break; }
+      Object.assign(sel, { walk: b, p: { x: px, z: pz }, right, d, A, B, w });
+      SEL.notes.push(`Corjuconi: ${L.street} × ${L.from} at E${A.x.toFixed(1)} N${(-A.z).toFixed(1)}, × ${L.toward} at E${B.x.toFixed(1)} N${(-B.z).toFixed(1)}, block ${Math.hypot(B.x - A.x, B.z - A.z).toFixed(1)} m; point at ${L.metres} m = E${px.toFixed(1)} N${(-pz).toFixed(1)}; ${L.side} side = ${right.x > 0 ? 'east' : 'west'}; lot ${b ? `found (${b.k}, ${b.st} fl, ${Math.abs(signedArea(b.P)).toFixed(0)} m², centroid E${b.c.x.toFixed(1)} N${(-b.c.z).toFixed(1)})` : 'NOT found'}`);
+    } else SEL.notes.push('Corjuconi: crossing(s) not found in the street graph');
+    for (const k in S.parts) { const p = EN(S.parts[k][0], S.parts[k][1]); const b = bAt(p.x, p.z, q => true); if (b && take(b, 'corjuconi')) { sel.parts[k] = b; if (b.k === 'school') b.k = 'public'; } else SEL.notes.push(`Corjuconi part "${k}" not found at E${S.parts[k][0]} N${S.parts[k][1]}`); }
+    if (sel.walk && !Object.values(sel.parts).includes(sel.walk)) SEL.notes.push('Corjuconi: the address-walk lot differs from the photo table (walk lot left generic)');
+    else if (sel.walk) SEL.notes.push('Corjuconi: address walk lands on the compound\'s "room" part (consistent)');
+    // abandoned corner lot opposite (SW corner of Carrera 28 × Calle 25; photos 02, 11)
+    for (const [e, n] of [[112.3, -519.1], [110.8, -527.6]]) { const p = EN(e, n), b = bAt(p.x, p.z, q => true); if (b && take(b, 'abandoned')) { sel.abandoned.push(b); b.k = 'abandoned'; } }
+    if (Object.keys(sel.parts).length) SEL.corjuconi = sel; else SEL.notes.push('Corjuconi: no compound parts found -> nothing built');
+  }
+  // ---- 2. Champagnat block: every cadastre part whose centroid lies in the block polygon (street axes)
+  {
+    const S = HERO_SPECS.champagnat, [c0, c1] = S.block.calles, [k0, k1] = S.block.carreras;
+    const q = [X(c0, k1), X(c1, k1), X(c1, k0), X(c0, k0)];
+    let blockP = q.every(Boolean) ? q : ptsOf(S.fallbackBlockEN.map(v => v * 10));
+    if (signedArea(blockP) < 0) blockP.reverse();
+    const parts = W.buildings.filter(b => b.s !== 'lm' && pointInPoly(b.c.x, b.c.z, blockP) && b.h > 2);
+    SEL.champagnat = { blockP, parts: parts.filter(b => take(b, 'champagnat')), fallback: !q.every(Boolean), extra: [] };
+    for (const b of SEL.champagnat.parts) b.k = 'public';   // abandoned school: no school crossings / signs / uniformed kids (12_street, 45_npcs key on 'school')
+    for (const o of (S.extraShops || [])) { const p = EN(o.at[0], o.at[1]), b = bAt(p.x, p.z, q => q.k !== 'shed'); if (b && take(b, 'galeria')) SEL.champagnat.extra.push({ b, spec: o }); }
+    SEL.notes.push(`Champagnat block: ${q.every(Boolean) ? 'crossings found' : 'FALLBACK polygon'}; ${SEL.champagnat.parts.length} cadastre parts: ` + SEL.champagnat.parts.map(b => `${b.k}/${b.st}fl/${Math.abs(signedArea(b.P)).toFixed(0)}m²`).join(', '));
+  }
+  // ---- 3. Galería streets: buildings with a wall facing a hero segment
+  {
+    const S = HERO_SPECS.galeria, segs = [];
+    for (const [st, a, b] of S.segments) { let A = X(st, a), B = X(st, b); if (!A || !B) { const f = S.fallbackEN[st]; if (!f) continue; A = EN(f[0], f[1]); B = EN(f[2], f[3]); } segs.push({ st, A, B }); }
+    const gal = (W.landmarks.market || [])[0], gc = gal ? gal.c : EN(389, -309);
+    const cand = [];
+    for (const b of W.buildings) {
+      if (SEL.removed.has(b) || b.s === 'lm' || b.k === 'shed' || b.k === 'roof' || !(b.h > 2.6) || Math.hypot(b.c.x - gc.x, b.c.z - gc.z) > 260) continue;
+      const fronts = [];
+      for (const F of framesOf(b.P)) {
+        if (F.L < 2.0) continue;   // narrow market 'locales' are 2–3 m wide
+        const m = F.A(F.L / 2, 0, 1.5);
+        for (const sg of segs) { const r = segDist(m[0], m[2], sg.A, sg.B); if (r.d < S.reach && r.t > 0.001 && r.t < 0.999) { const to = unit(r.x - m[0], r.z - m[2]); if (to.x * F.nx + to.z * F.nz > 0.7) { fronts.push(F); break; } } }
+      }
+      if (fronts.length) cand.push({ b, fronts, d: Math.hypot(b.c.x - gc.x, b.c.z - gc.z) });
+    }
+    cand.sort((p, q) => p.d - q.d);
+    for (const c of cand) { if (SEL.galeria.length >= S.maxBuildings) break; c.spec = {}; if (take(c.b, 'galeria')) SEL.galeria.push(c); }
+    for (const o of S.overrides) { const p = EN(o.at[0], o.at[1]); let best = null, bd = 20; for (const c of SEL.galeria) { const d = pointInPoly(p.x, p.z, c.b.P) ? 0 : Math.hypot(c.b.c.x - p.x, c.b.c.z - p.z); if (d < bd) { bd = d; best = c; } } if (best) { best.spec = o; best.named = true; } else SEL.notes.push(`override "${o.name}" matched no hero lot`); }
+    SEL.segs = segs; SEL.candidates = cand.length;
+    SEL.notes.push(`Galería: ${segs.length} segments, ${cand.length} candidates, ${SEL.galeria.length} hero lots`);
+  }
+  if (SEL.removed.size) W.buildings = W.buildings.filter(b => !SEL.removed.has(b));   // bGrid keeps them: collision unchanged
+  // provisional LANDMARK_INFO entries (missions / NPCs / the map read them before the hooks run)
+  if (SEL.corjuconi) { const b = SEL.corjuconi.parts.L || SEL.corjuconi.parts.room || Object.values(SEL.corjuconi.parts)[0]; info('Corjuconi · Carrera 28 # 24-56', b.c.x, b.c.z, 'Sede de la asociación familiar; esquina azul de teja + bloque de 2 pisos. Verificado con fotos de la familia (2026-10-03) y catastro'); }
+  if (SEL.champagnat && SEL.champagnat.parts.length) { const c = centroid(SEL.champagnat.blockP); info('Antigua Escuela Champagnat', c.x, c.z, 'Cerrada hace más de 20 años (abandonada). Manzana Cl 25-26 × Cra 27-28; fachada y patio según fotos de la familia (2026-10-03)'); }
+  for (const c of SEL.galeria) if (c.named) info(c.spec.name + ' · Calle 28', c.b.c.x, c.b.c.z, 'Nombre y pisos de OSM (' + (c.spec.source || 'ODbL') + '); fachada aproximada');
+
+  // ============================================================ hook
+  HOOKS.buildHeroBlocks = () => {
+    const t0 = performance.now(), stats = { meshes: 0, tris: 0, by: {}, buildings: 0, notes: SEL.notes }, meshes = [], SG = new SignAtlas(HI ? 1024 : 512), reg = [];
+    const add = (gb, name) => { if (!gb.count) return; const m = addMesh(gb.build(), MAT_FAC); m.name = 'hero_' + name; const g = m.geometry; g.computeBoundingBox(); const B = g.boundingBox; registerChunkMesh(m, [B.min.x, B.min.z, B.max.x, B.max.z], HERO_CFG.range); meshes.push(m); stats.meshes++; stats.tris += gb.count; stats.by[name] = gb.count; };
+    const run = (name, fn) => { try { fn(); } catch (e) { console.error('hero ' + name, e); } };
+    if (SEL.corjuconi) run('corjuconi', () => { const gb = new GB(); buildCorjuconi(gb, SG, SEL.corjuconi); if (SEL.corjuconi.abandoned.length) buildAbandoned(gb, SEL.corjuconi.abandoned);
+      const S = HERO_SPECS.champagnat; if (S.pare) { const A = X(S.pare.street, S.pare.before), B = X(S.pare.street, 'Calle 26'); if (A && B) roadMarks(gb, SG, A, B, S.pare.metresBack); }
+      add(gb, 'corjuconi'); stats.buildings += Object.keys(SEL.corjuconi.parts).length + SEL.corjuconi.abandoned.length;
+      for (const k in SEL.corjuconi.parts) { const b = SEL.corjuconi.parts[k]; reg.push({ name: 'Corjuconi · ' + k, addr: HERO_SPECS.corjuconi.addr, x: b.c.x, z: b.c.z, floors: b.st, fidelity: HERO_SPECS.corjuconi.fidelity }); }
+      for (const b of SEL.corjuconi.abandoned) reg.push({ name: 'Lote abandonado (esquina frente a Corjuconi)', x: b.c.x, z: b.c.z, fidelity: 'Fotos de la familia 02/11 (2026-10-03): muros blancos, columnas rosadas, maleza; huella catastro' }); });
+    if (SEL.champagnat && SEL.champagnat.parts.length) run('champagnat', () => { const gb = new GB(); buildChampagnat(gb, SG, SEL.champagnat.parts, SEL.champagnat.blockP); add(gb, 'champagnat'); stats.buildings += SEL.champagnat.parts.length;
+      for (const e of SEL.champagnat.extra) { const fr = framesOf(e.b.P).filter(F => F.L > 2 && facesStreet({ p: F.p, q: F.q, nx: F.nx, nz: F.nz })); shopHouse(gb, SG, e.b, fr, e.spec, !HI); reg.push({ name: e.spec.name, x: e.b.c.x, z: e.b.c.z, fidelity: 'Letrero real (foto 06 de la familia); fachada aproximada' }); }
+      for (const b of SEL.champagnat.parts) reg.push({ name: 'Antigua Escuela Champagnat', part: `${b.k} ${b.st} fl ${Math.abs(signedArea(b.P)).toFixed(0)} m²`, x: b.c.x, z: b.c.z, fidelity: HERO_SPECS.champagnat.fidelity, pendingPhoto: true }); });
+    if (SEL.galeria.length) run('galeria', () => {
+      // 3 meshes (west / east of the Galería centre / south streets) so the frustum and the 250 m range cull parts
+      const gal = (W.landmarks.market || [])[0], gc = gal ? gal.c : EN(389, -309), groups = { galW: new GB(), galE: new GB(), galS: new GB() };
+      for (const c of SEL.galeria) {
+        const gb = c.b.c.z > gc.z + 20 ? groups.galS : c.b.c.x < gc.x ? groups.galW : groups.galE;
+        shopHouse(gb, SG, c.b, c.fronts, c.spec, !HI); stats.buildings++;
+        reg.push({ name: c.spec.name || 'local (genérico)', x: c.b.c.x, z: c.b.c.z, floors: c.b.st, kind: c.b.k, fidelity: c.spec.name ? 'nombre/pisos OSM, fachada aproximada' : 'huella/pisos catastro (verificado); local inventado, fachada aproximada' });
+      }
+      for (const k in groups) add(groups[k], k);
+    });
+    const gm = HERO_CFG.glow ? glowMesh() : null; if (gm) { const g = gm.geometry; g.computeBoundingBox(); const B = g.boundingBox; registerChunkMesh(gm, [B.min.x, B.min.z, B.max.x, B.max.z], HERO_CFG.range); meshes.push(gm); stats.meshes++; stats.tris += GLOW.n; stats.by.glow = GLOW.n; }
+    const sm = SG.mesh(); if (sm) { const g = sm.geometry; g.computeBoundingBox(); const B = g.boundingBox; registerChunkMesh(sm, [B.min.x, B.min.z, B.max.x, B.max.z], HERO_CFG.range); meshes.push(sm); stats.meshes++; stats.tris += SG.n; stats.by.signs = SG.n; }
+    stats.ms = Math.round(performance.now() - t0);
+    HOOKS.heroStats = stats; HOOKS.heroBuildings = reg; HOOKS.heroMeshes = meshes;
+    console.info('hero blocks', stats.ms + 'ms', stats.meshes, 'meshes', stats.tris, 'tris', stats.by, 'buildings', stats.buildings, SEL.notes);
+  };
+  HOOKS.heroSelection = SEL;
+}
+
 // ===== 20_vehicle.js
 // Vehicles (original low-poly designs), player car physics, on-foot character, camera rig.
 // Yaw convention: object.rotation.y = a, local +x is the front, forward = (cos a, 0, -sin a), right = (sin a, 0, cos a).
@@ -13311,7 +13984,7 @@ function boot() {
   renderMapRaster();
   initTraffic(); initPeds(); initPursuit(); initMissions(); initNpcs(); initDealer(); setupBigMap();
   // optional modules owned by other workstreams (each defines its functions in its own file)
-  for (const f of ['buildLandmarksDetailed', 'buildStreet', 'initAtmosphere', 'initCombat', 'initVendors']) { try { const fn = HOOKS[f]; if (fn) fn(); } catch (e) { console.error(f, e); } }
+  for (const f of ['buildLandmarksDetailed', 'buildHeroBlocks', 'buildStreet', 'initAtmosphere', 'initCombat', 'initVendors']) { try { const fn = HOOKS[f]; if (fn) fn(); } catch (e) { console.error(f, e); } }
   if (IS_TOUCH) setupTouch();
   G.car = new PlayerCar(SAVE.vehicle?.type && VTYPES[SAVE.vehicle.type] ? SAVE.vehicle.type : 'hatch', SAVE.vehicle?.color || SAVE.color);
   G.walker = new Walker();
